@@ -4,8 +4,8 @@ Monorepo para o desafio da Rinha de Backend 2026.
 
 ## Stack
 
-- **Load Balancer**: Zig puro (std.net)
-- **API**: Bun puro
+- **Load Balancer**: Zig (std.net)
+- **API**: Bun
 - **Busca Vetorial**: Índice bináriommap
 
 ## Estrutura

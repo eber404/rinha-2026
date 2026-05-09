@@ -1,17 +1,16 @@
-FROM alpine:3.19 AS builder
+FROM alpine:3.19
 
-RUN apk add --no-cache zig
+RUN apk add --no-cache nginx
 
-WORKDIR /app
-COPY src ./src
-COPY build.zig build.zig.zon ./
+RUN echo 'server { listen 9999; location / { proxy_pass http://fraud-api-1:8080; } }' > /etc/nginx/http.d/default.conf && \
+    echo 'stream { server { listen 9999; proxy_pass fraud-api-1:8080; } }' > /etc/nginx/conf.d/stream.conf
 
-RUN zig build-exe src/main.zig -O ReleaseSmall
+RUN rm -f /etc/nginx/http.d/default.conf
 
-FROM scratch
-
-COPY --from=builder /app/main /load-balancer
+RUN echo 'daemon off; worker_processes 1;' > /etc/nginx/nginx.conf && \
+    echo 'events { worker_connections 1024; }' >> /etc/nginx/nginx.conf && \
+    echo 'stream { server { listen 9999; proxy_pass fraud-api-1:8080; } }' >> /etc/nginx/nginx.conf
 
 EXPOSE 9999
 
-ENTRYPOINT ["/load-balancer"]
+CMD ["nginx"]

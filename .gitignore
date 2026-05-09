@@ -21,3 +21,7 @@ node_modules/
 
 # Test coverage
 coverage/
+
+.cache
+.agents
+.opencodefraud-api/data/

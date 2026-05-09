@@ -7,19 +7,18 @@ services:
     container_name: fraud-api-1
     environment:
       - INSTANCE_ID=1
-      - UDS_PATH=/tmp/rinha/api-1.sock
+      - PORT=8080
       - DATA_DIR=/app/data
     volumes:
       - ./fraud-api/data:/app/data
-      - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
     restart: on-failure
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: '128MB'
+          cpus: '0.5'
+          memory: '512MB'
 
   fraud-api-2:
     build:
@@ -29,45 +28,38 @@ services:
     container_name: fraud-api-2
     environment:
       - INSTANCE_ID=2
-      - UDS_PATH=/tmp/rinha/api-2.sock
+      - PORT=8080
       - DATA_DIR=/app/data
     volumes:
       - ./fraud-api/data:/app/data
-      - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
     restart: on-failure
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: '128MB'
+          cpus: '0.5'
+          memory: '512MB'
 
   load-balancer:
-    build:
-      context: ./load-balancer
-      dockerfile: Dockerfile
-    image: load-balancer:latest
+    image: nginx:alpine
     container_name: load-balancer
     ports:
       - "9999:9999"
-    volumes:
-      - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
     restart: on-failure
     depends_on:
       - fraud-api-1
       - fraud-api-2
+    volumes:
+      - ./load-balancer/nginx.conf:/etc/nginx/nginx.conf:ro
     deploy:
       resources:
         limits:
           cpus: '0.5'
-          memory: '94MB'
+          memory: '128MB'
 
 networks:
   rinha-net:
     driver: bridge
-
-volumes:
-  rinha-sockets:
