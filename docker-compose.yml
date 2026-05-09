@@ -42,7 +42,10 @@ services:
           memory: '512MB'
 
   load-balancer:
-    image: nginx:alpine
+    build:
+      context: ./load-balancer
+      dockerfile: Dockerfile
+    image: rinha-lb:latest
     container_name: load-balancer
     ports:
       - "9999:9999"
@@ -52,8 +55,6 @@ services:
     depends_on:
       - fraud-api-1
       - fraud-api-2
-    volumes:
-      - ./load-balancer/nginx.conf:/etc/nginx/nginx.conf:ro
     deploy:
       resources:
         limits:
