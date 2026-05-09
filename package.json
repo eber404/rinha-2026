@@ -1,0 +1,18 @@
+{
+  "name": "rinha-2026",
+  "version": "1.0.0",
+  "description": "Rinha de Backend 2026 - Fraud Detection with Vector Search",
+  "private": true,
+  "workspaces": [
+    "load-balancer",
+    "fraud-api"
+  ],
+  "scripts": {
+    "build:data": "./build/download-and-convert.sh",
+    "dev:api": "cd fraud-api && bun run src/index.ts",
+    "dev:lb": "cd load-balancer && zig build-exe src/main.zig && ./main",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up",
+    "docker:down": "docker-compose down"
+  }
+}
