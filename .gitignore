@@ -1,5 +1,23 @@
 .zig-cache/
+.zig-cache/
+*.o
+*.exe
+main
+
+# Dependencies
 node_modules/
+
+# Environment
 .env
-*.swp
+.env.local
+
+# OS
 .DS_Store
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# Test coverage
+coverage/
