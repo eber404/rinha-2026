@@ -33,13 +33,14 @@ pub const Response = struct {
     }
 };
 
-const Handler = *const fn (method: []const u8, path: []const u8, body: []const u8) Response;
+const Handler = *const fn (method: []const u8, path: []const u8, body: []const u8, instance_id: []const u8) []const u8;
 
 pub const Router = struct {
     handler: Handler,
+    instance_id: []const u8,
 
-    pub fn route(r: Router, method: []const u8, path: []const u8, body: []const u8) Response {
-        return r.handler(method, path, body);
+    pub fn route(r: Router, method: []const u8, path: []const u8, body: []const u8) []const u8 {
+        return r.handler(method, path, body, r.instance_id);
     }
 };
 
@@ -178,10 +179,7 @@ pub fn handleConnection(rfd: c_int, router: Router) !void {
                 }
 
                 const resp = router.route(parsed.method, parsed.path, buf[body_start..body_start + content_length]);
-                const precomputed = resp.toPrecomputed();
-
-                _ = linux.write(rfd, precomputed.headers.ptr, precomputed.headers.len);
-                _ = linux.write(rfd, precomputed.body.ptr, precomputed.body.len);
+                _ = linux.write(rfd, resp.ptr, resp.len);
                 return;
             }
         }
