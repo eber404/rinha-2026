@@ -3,16 +3,7 @@ const http = @import("http.zig");
 const router = @import("router.zig");
 
 pub fn main() void {
-    var instance_id: []const u8 = "1";
-    const env_value = std.process.getEnvVarOwned(std.heap.page_allocator, "INSTANCE_ID") catch null;
-    if (env_value) |value| {
-        instance_id = value;
-    }
-
-    if (!std.mem.eql(u8, instance_id, "1") and !std.mem.eql(u8, instance_id, "2")) {
-        std.debug.print("invalid INSTANCE_ID '{s}', fallback to 1\n", .{instance_id});
-        instance_id = "1";
-    }
+    const instance_id = "1";
 
     http.createSocketDir() catch return;
     const sock_fd = http.createAndBindUdsSocket(instance_id) catch |err| {
