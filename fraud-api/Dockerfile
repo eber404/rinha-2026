@@ -14,6 +14,10 @@ RUN zig build-exe main.zig -O ReleaseSmall
 
 FROM alpine:3.19
 
-COPY --from=builder /app/main /app/main
+RUN mkdir -p /tmp/rinha
 
-CMD ["/app/main"]
+COPY --from=builder /app/main /app/main
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

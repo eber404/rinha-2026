@@ -176,4 +176,16 @@ for (let d = 0; d < 14; d++) offsetsBuf.writeFloatLE(offsets[d], d * 4);
 writeFileSync(`${DATA_DIR}/offsets.bin`, offsetsBuf);
 console.log(`  offsets.bin: 56 bytes`);
 
+console.log("\nWriting refs.bin (flat vector + label)...");
+const refsBuf = Buffer.alloc(N * (14 * 4 + 1));
+for (let i = 0; i < N; i++) {
+  const v = data[i].vector;
+  for (let d = 0; d < 14; d++) {
+    refsBuf.writeFloatLE(v[d], i * 57 + d * 4);
+  }
+  refsBuf[i * 57 + 56] = labels[i];
+}
+writeFileSync(`${DATA_DIR}/refs.bin`, refsBuf);
+console.log(`  refs.bin: ${N * 57} bytes`);
+
 console.log("\nDone!");

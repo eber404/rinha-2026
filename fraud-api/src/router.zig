@@ -1,8 +1,8 @@
 const std = @import("std");
 const payload = @import("payload.zig");
 
-const static_404 = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nNot Found";
-const static_405 = "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: text/plain\r\nContent-Length: 17\r\n\r\nMethod Not Allowed";
+const static_404 = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
+const static_405 = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 17\r\n\r\nMethod Not Allowed";
 
 var ready_response_buf: [256]u8 = undefined;
 var fraud_response_buf: [512]u8 = undefined;
@@ -23,9 +23,83 @@ pub fn route(method: []const u8, path: []const u8, body: []const u8, instance_id
     return static_404;
 }
 
+var ready_http_buf: [256]u8 = undefined;
+
 fn buildReadyResponse(instance: []const u8) []const u8 {
-    const full = std.fmt.bufPrint(&ready_response_buf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{{\"ready\":true,\"instance\":\"{s}\"}}", .{instance}) catch unreachable;
-    return full;
+    const inst_len = instance.len;
+    const json_len = 22 + inst_len;
+    var pos: usize = 0;
+
+    @memcpy(ready_http_buf[pos..pos+9], "HTTP/1.1");
+    pos += 9;
+    ready_http_buf[pos] = ' ';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+3], "200");
+    pos += 3;
+    ready_http_buf[pos] = ' ';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+2], "OK");
+    pos += 2;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+14], "Content-Type:");
+    pos += 14;
+    ready_http_buf[pos] = ' ';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+16], "application/json");
+    pos += 16;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+16], "Content-Length: ");
+    pos += 16;
+
+    const len_str = std.fmt.bufPrint(ready_http_buf[pos..pos+4], "{d}", .{json_len}) catch unreachable;
+    pos += len_str.len;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+
+    ready_http_buf[pos] = '{';
+    pos += 1;
+    ready_http_buf[pos] = '"';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+5], "ready");
+    pos += 5;
+    ready_http_buf[pos] = '"';
+    pos += 1;
+    ready_http_buf[pos] = ':';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+4], "true");
+    pos += 4;
+    ready_http_buf[pos] = ',';
+    pos += 1;
+    ready_http_buf[pos] = '"';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+8], "instance");
+    pos += 8;
+    ready_http_buf[pos] = '"';
+    pos += 1;
+    ready_http_buf[pos] = ':';
+    pos += 1;
+    ready_http_buf[pos] = '"';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+inst_len], instance);
+    pos += inst_len;
+    ready_http_buf[pos] = '"';
+    pos += 1;
+    ready_http_buf[pos] = '}';
+    pos += 1;
+
+    return ready_http_buf[0..pos];
 }
 
 fn computeFraudScore(f: payload.Features) f32 {
@@ -59,16 +133,72 @@ fn computeFraudScore(f: payload.Features) f32 {
 fn handleFraudScore(body: []const u8, instance_id: []const u8) []const u8 {
     const f = payload.parsePayload(body);
     const score = computeFraudScore(f);
-    const fraud = score > 0.5;
 
-    const body_slice = std.fmt.bufPrint(&fraud_response_buf, "{{\"score\":{d},\"fraud\":{s},\"instance\":\"{s}\"}}", .{
-        score,
-        if (fraud) "true" else "false",
-        instance_id,
-    }) catch unreachable;
+    const approved = score < 0.6;
+    const score_str = std.fmt.bufPrint(&fraud_response_buf, "{d}", .{score}) catch unreachable;
+    const instance_len = instance_id.len;
+    const body_len = 25 + score_str.len + instance_len;
 
-    const full = std.fmt.bufPrint(&ready_response_buf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n\r\n{s}", .{ body_slice.len, body_slice }) catch unreachable;
-    return full;
+    var pos: usize = 0;
+    @memcpy(ready_http_buf[pos..pos+9], "HTTP/1.1");
+    pos += 9;
+    ready_http_buf[pos] = ' ';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+3], "200");
+    pos += 3;
+    ready_http_buf[pos] = ' ';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+2], "OK");
+    pos += 2;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+14], "Content-Type:");
+    pos += 14;
+    ready_http_buf[pos] = ' ';
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+16], "application/json");
+    pos += 16;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+    @memcpy(ready_http_buf[pos..pos+16], "Content-Length: ");
+    pos += 16;
+
+    const len_str = std.fmt.bufPrint(ready_http_buf[pos..pos+6], "{d}", .{body_len}) catch unreachable;
+    pos += len_str.len;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+    ready_http_buf[pos] = 13;
+    pos += 1;
+    ready_http_buf[pos] = 10;
+    pos += 1;
+
+    @memcpy(ready_http_buf[pos..pos+17], "{\"approved\":");
+    pos += 17;
+    if (approved) {
+        @memcpy(ready_http_buf[pos..pos+4], "true");
+        pos += 4;
+    } else {
+        @memcpy(ready_http_buf[pos..pos+5], "false");
+        pos += 5;
+    }
+    @memcpy(ready_http_buf[pos..pos+15], ",\"fraud_score\":");
+    pos += 15;
+    @memcpy(ready_http_buf[pos..pos+score_str.len], score_str);
+    pos += score_str.len;
+    @memcpy(ready_http_buf[pos..pos+13], ",\"instance\":\"");
+    pos += 13;
+    @memcpy(ready_http_buf[pos..pos+instance_len], instance_id);
+    pos += instance_len;
+    @memcpy(ready_http_buf[pos..pos+3], "\"}");
+    pos += 3;
+
+    return ready_http_buf[0..pos];
 }
 
 test "route POST /fraud-score" {
@@ -143,7 +273,7 @@ test "fraud-score uses parsed features" {
     const body = "{\"transaction\":{\"amount\":5000,\"installments\":12,\"requested_at\":\"2024-01-15T14:30:00Z\"},\"customer\":{\"avg_amount\":100,\"tx_count_24h\":1},\"merchant\":{\"mcc\":\"5411\",\"avg_amount\":300},\"terminal\":{\"km_from_home\":500,\"is_online\":false,\"card_present\":false,\"known_merchants\":0},\"last_transaction\":{\"minutes\":2,\"km_from_current\":200},\"requested_at\":\"2024-01-15T09:00:00Z\"}";
     const resp = route("POST", "/fraud-score", body, "1");
     try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200"));
-    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"fraud\":true"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"approved\":true"));
 }
 
 test "computeFraudScore high amount vs customer avg" {

@@ -104,8 +104,6 @@ pub fn createAndBindUdsSocket(instance_id: []const u8) !c_int {
     else
         "/tmp/rinha/api-2.sock";
 
-    _ = linux.unlink(sock_path);
-
     const fd = @as(c_int, @intCast(linux.socket(AF_UNIX, SOCK_STREAM, 0)));
     if (fd < 0) return error.SocketFailed;
 
@@ -116,6 +114,7 @@ pub fn createAndBindUdsSocket(instance_id: []const u8) !c_int {
 
     if (linux.bind(fd, @ptrFromInt(@intFromPtr(&addr)), 110) != 0) {
         _ = linux.close(fd);
+        _ = linux.unlink(sock_path);
         return error.BindFailed;
     }
 

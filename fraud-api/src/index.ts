@@ -58,7 +58,7 @@ function handleFraudScore(req: Request): Response {
   const payload = parsePayload(req)
   if (!payload) return jsonResponse({ error: 'invalid payload' }, 400)
 
-  const vector = normalizeToVector(payload)
+  const vector = parsePayloadWithContext(payload)
   const fraudScore = searchKnn(vector)
   const approved = fraudScore < FRAUD_THRESHOLD
 
@@ -76,6 +76,100 @@ function parsePayload(req: Request): Record<string, any> | null {
   } catch {
     return null
   }
+}
+
+type RawValues = {
+  tx_amount: number
+  tx_installments: number
+  cust_avg_amount: number
+  tx_requested_at: string
+  last_minutes: number
+  last_km: number
+  term_km_from_home: number
+  cust_tx_count_24h: number
+  term_is_online: boolean
+  term_card_present: boolean
+  cust_known_merchants: string[]
+  merch_id: string
+  merch_mcc: string
+  merch_avg_amount: number
+  has_last: boolean
+}
+
+function parsePayloadWithContext(payload: Record<string, any>): Float32Array {
+  const raw: RawValues = {
+    tx_amount: 0,
+    tx_installments: 0,
+    cust_avg_amount: 0,
+    tx_requested_at: '',
+    last_minutes: 0,
+    last_km: 0,
+    term_km_from_home: 0,
+    cust_tx_count_24h: 0,
+    term_is_online: false,
+    term_card_present: false,
+    cust_known_merchants: [],
+    merch_id: '',
+    merch_mcc: '',
+    merch_avg_amount: 0,
+    has_last: false,
+  }
+  const ctx: ContextStackItem[] = []
+
+  function visit(obj: any) {
+    if (obj === null || typeof obj !== 'object') return
+    for (const [key, value] of Object.entries(obj)) {
+      const currentPath = ctx.length > 0 ? `${ctx[ctx.length - 1].path}.${key}` : key
+
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        ctx.push({ key, path: currentPath })
+        visit(value)
+        ctx.pop()
+      } else {
+        if (currentPath === 'transaction.amount') raw.tx_amount = value as number
+        else if (currentPath === 'transaction.installments') raw.tx_installments = value as number
+        else if (currentPath === 'customer.avg_amount') raw.cust_avg_amount = value as number
+        else if (currentPath === 'transaction.requested_at') raw.tx_requested_at = value as string
+        else if (currentPath === 'last_transaction.minutes') { raw.last_minutes = value as number; raw.has_last = true }
+        else if (currentPath === 'last_transaction.km_from_current') raw.last_km = value as number
+        else if (currentPath === 'terminal.km_from_home') raw.term_km_from_home = value as number
+        else if (currentPath === 'customer.tx_count_24h') raw.cust_tx_count_24h = value as number
+        else if (currentPath === 'terminal.is_online') raw.term_is_online = value as boolean
+        else if (currentPath === 'terminal.card_present') raw.term_card_present = value as boolean
+        else if (currentPath === 'customer.known_merchants') raw.cust_known_merchants = value as string[]
+        else if (currentPath === 'merchant.id') raw.merch_id = value as string
+        else if (currentPath === 'merchant.mcc') raw.merch_mcc = value as string
+        else if (currentPath === 'merchant.avg_amount') raw.merch_avg_amount = value as number
+      }
+    }
+  }
+
+  visit(payload)
+
+  const v = new Float32Array(VECTOR_DIM)
+  v[0] = clamp(raw.tx_amount / normalization.max_amount)
+  v[1] = clamp(raw.tx_installments / normalization.max_installments)
+  v[2] = clamp(raw.tx_amount / raw.cust_avg_amount / normalization.amount_vs_avg_ratio)
+  v[3] = hourOfDay(raw.tx_requested_at) / 23
+  v[4] = dayOfWeek(raw.tx_requested_at) / 6
+
+  if (!raw.has_last) {
+    v[5] = -1
+    v[6] = -1
+  } else {
+    v[5] = clamp(raw.last_minutes / normalization.max_minutes)
+    v[6] = clamp(raw.last_km / normalization.max_km)
+  }
+
+  v[7] = clamp(raw.term_km_from_home / normalization.max_km)
+  v[8] = clamp(raw.cust_tx_count_24h / normalization.max_tx_count_24h)
+  v[9] = raw.term_is_online ? 1 : 0
+  v[10] = raw.term_card_present ? 1 : 0
+  v[11] = isUnknownMerchant(raw.merch_id, raw.cust_known_merchants) ? 1 : 0
+  v[12] = mccRisk[raw.merch_mcc] ?? 0.5
+  v[13] = clamp(raw.merch_avg_amount / normalization.max_merchant_avg_amount)
+
+  return v
 }
 
 function normalizeToVector(p: Record<string, any>): Float32Array {

@@ -42,6 +42,9 @@ pub fn main() !void {
             if (alt_fd) |afd| {
                 defer _ = linux.close(afd);
                 proxyLoop(client_fd, afd);
+            } else {
+                const err_resp = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                _ = linux.write(client_fd, err_resp, err_resp.len);
             }
         }
 
@@ -81,8 +84,6 @@ fn proxyLoop(client_fd: c_int, backend_fd: c_int) void {
         if (r > 0) {
             const w = linux.write(backend_fd, buf_ptr, @as(usize, @intCast(r)));
             if (w <= 0) break;
-        } else {
-            break;
         }
 
         const r2 = linux.read(backend_fd, buf_ptr, BUFFER_SIZE);
@@ -92,6 +93,8 @@ fn proxyLoop(client_fd: c_int, backend_fd: c_int) void {
         } else {
             break;
         }
+
+        if (r == 0) break;
     }
 }
 

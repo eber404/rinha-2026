@@ -22,7 +22,6 @@ services:
       - ./data:/data:ro
     networks:
       - rinha-net
-    restart: on-failure
     depends_on:
       preprocess:
         condition: service_completed_successfully
@@ -45,7 +44,6 @@ services:
       - ./data:/data:ro
     networks:
       - rinha-net
-    restart: on-failure
     depends_on:
       preprocess:
         condition: service_completed_successfully
@@ -67,7 +65,6 @@ services:
       - ./sockets:/tmp/rinha
     networks:
       - rinha-net
-    restart: on-failure
     depends_on:
       - fraud-api-1
       - fraud-api-2
