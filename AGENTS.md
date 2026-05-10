@@ -2,47 +2,42 @@
 
 ## Context
 
-This is a monorepo for the **Rinha de Backend 2026** challenge: building a fraud detection module for credit card transactions using vector search.
+Monorepo for Rinha de Backend 2026. Entire hot path in Zig.
 
 ## Architecture
 
 ```
-[Client] → :9999 (Zig LB, round-robin) → /tmp/rinha/api-1.sock (Bun API)
-                                              /tmp/rinha/api-2.sock (Bun API)
+[Client] -> :9999 (Zig LB) -> /tmp/rinha/api-1.sock (Zig API)
+                              /tmp/rinha/api-2.sock (Zig API)
 ```
 
-- **Load Balancer**: Zig, pure std.linux, TCP:9999 → UDS
-- **Fraud API**: Bun, UDS listener, vector search, KNN classification
+- **Load Balancer**: Zig, std.os.linux, TCP:9999 -> UDS round-robin
+- **Fraud API**: Zig, UDS HTTP parser + payload parser + quantization + scorer
+- **Preprocess**: Bun, generates binaries in `/data`
 
 ## Design Principles
 
-- Clean code: early returns, no nested ifs, no coupling
-- Unix domain sockets for low-latency internal communication
-- Binary format for reference index (fast mmap access)
-- Minimal dependencies (Zig std only, Bun built-ins)
+- Early return, avoid unnecessary nesting
+- UDS between LB and API
+- Reference data in read-only mmap binary files
+- No heap allocation in the critical scoring loop
 
 ## Repository Structure
 
 ```
-load-balancer/    # Zig LB (TCP proxy → UDS)
-fraud-api/        # Bun API (UDS + vector search)
-build/            # Data download + conversion scripts
+load-balancer/    # LB Zig (TCP -> UDS)
+fraud-api/        # API Zig (HTTP + parser + scoring)
+preprocess/       # Bun scripts to generate index files
+docs/             # plans and notes
 docker-compose.yml
 ```
 
-## Key Decisions
+## Operational Notes
 
-| Aspect | Choice |
-|--------|--------|
-| LB→API comms | UDS (lower latency than TCP) |
-| Vector index | Binary file (mmap-friendly) |
-| Search | Linear scan KNN (simple, works for 3M records) |
-| Normalization | Per-dimension with constants from normalization.json |
-
-## Quality
-
-- Unit tests for both Zig and Bun modules
-- Docker-based integration-ready setup
+- Health endpoint: `GET /ready`
+- Scoring endpoint: `POST /fraud-score`
+- Official test: `make test-official`
+- Official result output: `artifacts/rinha-official-result.json`
 
 ## References
 

@@ -1,8 +1,13 @@
 .zig-cache/
-.zig-cache/
+zig-out/
+**/.zig-cache/
+**/zig-out/
+
 *.o
 *.exe
 main
+load-balancer/main
+fraud-api/main
 
 # Dependencies
 node_modules/
@@ -16,13 +21,25 @@ node_modules/
 *.swp
 *.swo
 
-# Docker
+# Docker/logs
 *.log
+sockets/
 
-# Test coverage
+# Coverage/cache
 coverage/
+.cache/
 
-.cache
-.agents
-.opencodefraud-api/data/
+# Generated data
+data/*.bin
+data/refs.bin
+data/references.json
 preprocess/data/*.bin
+fraud-api/data/
+
+# Test artifacts
+artifacts/rinha-official-result.json
+
+# Tooling
+.agents/
+.opencode/
+.ralph/

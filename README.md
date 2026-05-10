@@ -1,44 +1,44 @@
 # Rinha 2026 - Fraud Detection
 
-Monorepo para o desafio da Rinha de Backend 2026.
+Monorepo for Rinha de Backend 2026.
 
 ## Stack
 
-- **Load Balancer**: Zig (std.net)
-- **API**: Bun
-- **Busca Vetorial**: Índice bináriommap
+- **Load Balancer**: Zig (`load-balancer/src/main.zig`)
+- **API**: Zig (`fraud-api/src/*.zig`)
+- **Preprocess**: Bun (`preprocess/src/generate_index.bun`)
+- **Dataset**: binaries in `data/*.bin`
 
-## Estrutura
+## Structure
 
 ```
-├── load-balancer/     # LB em Zig
-├── fraud-api/         # API em Bun
-├── build/             # Scripts de build
-├── docs/              # Documentação
-└── docker-compose.yml
-```
-
-## Quick Start
-
-```bash
-# Baixar dados
-npm run build:data
-
-# Dev API
-npm run dev:api
-
-# Dev LB
-npm run dev:lb
-
-# Docker
-npm run docker:up
+load-balancer/   # Zig LB (TCP:9999 -> UDS)
+fraud-api/       # Zig API (HTTP + payload + scorer)
+preprocess/      # Index and binary generation
+docs/            # plans and notes
+artifacts/       # local benchmark/test results
 ```
 
 ## Endpoints
 
-- `GET /ready` - Healthcheck
-- `POST /fraud-score` - Detecção de fraude
+- `GET /ready`
+- `POST /fraud-score`
 
-## Regras
+## Commands
 
-Ver [docs/plans/](docs/plans/2026-05-08-rinha-fraud-detection-design.md)
+```bash
+# Start local stack
+docker-compose up -d --build
+
+# Run official Rinha test and save result
+make test-official
+```
+
+## Official test
+
+`make test-official` does:
+1. Clones (or updates) `zanfranceschi/rinha-de-backend-2026` into `.cache/rinha-official`
+2. Runs `./run.sh` in the official repository
+3. Copies `test/results.json` to `artifacts/rinha-official-result.json`
+
+> `artifacts/rinha-official-result.json` is saved for local inspection and ignored by Git.
