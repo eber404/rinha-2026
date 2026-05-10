@@ -25,3 +25,4 @@ coverage/
 .cache
 .agents
 .opencodefraud-api/data/
+preprocess/data/*.bin
