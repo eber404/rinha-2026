@@ -99,13 +99,15 @@ pub fn createSocketDir() !void {
 }
 
 pub fn createAndBindUdsSocket(instance_id: []const u8) !c_int {
-    const sock_path = if (std.mem.eql(u8, instance_id, "1"))
+    const sock_path: [:0]const u8 = if (std.mem.eql(u8, instance_id, "1"))
         "/tmp/rinha/api-1.sock"
     else
         "/tmp/rinha/api-2.sock";
 
     const fd = @as(c_int, @intCast(linux.socket(AF_UNIX, SOCK_STREAM, 0)));
     if (fd < 0) return error.SocketFailed;
+
+    _ = linux.unlink(sock_path);
 
     var addr: [110]u8 = undefined;
     @memset(&addr, 0);
@@ -114,7 +116,6 @@ pub fn createAndBindUdsSocket(instance_id: []const u8) !c_int {
 
     if (linux.bind(fd, @ptrFromInt(@intFromPtr(&addr)), 110) != 0) {
         _ = linux.close(fd);
-        _ = linux.unlink(sock_path);
         return error.BindFailed;
     }
 
