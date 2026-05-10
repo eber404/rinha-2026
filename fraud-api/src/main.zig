@@ -2,10 +2,15 @@ const std = @import("std");
 const http = @import("http.zig");
 const router = @import("router.zig");
 
-pub fn main() void {
-    const instance_id = "1";
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]u8;
 
-    router.initScorer("/data");
+pub fn main() void {
+    const instance_id = if (getenv("INSTANCE_ID")) |val|
+        std.mem.span(val)
+    else
+        "1";
+
+    router.initScorer("/app/data");
 
     http.createSocketDir() catch return;
     const sock_fd = http.createAndBindUdsSocket(instance_id) catch |err| {
@@ -21,8 +26,8 @@ pub fn main() void {
     while (true) {
         const client_fd = @as(c_int, @intCast(std.os.linux.accept(sock_fd, null, null)));
         if (client_fd < 0) continue;
-        defer _ = std.os.linux.close(client_fd);
 
         http.handleConnection(client_fd, r) catch {};
+        _ = std.os.linux.close(client_fd);
     }
 }

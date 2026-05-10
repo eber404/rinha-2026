@@ -10,14 +10,14 @@ const CLUSTER_OFFSETS_SIZE = 2048;
 const SCALES_SIZE = 56;
 const OFFSETS_SIZE = 56;
 
-const PROT_READ = @as(linux.PROT, @bitCast(@as(u32, 1)));
-const MAP_FILE = @as(linux.MAP, @bitCast(@as(u32, 0)));
-const MAP_SHARED = @as(linux.MAP, @bitCast(@as(u32, 1)));
+const PROT_READ: u32 = @as(u32, 1);
+const MAP_FILE: u32 = @as(u32, 0);
+const MAP_SHARED: u32 = @as(u32, 1);
 
-const O_RDONLY_V = @as(linux.O, @bitCast(@as(u32, 0)));
-const O_WRONLY_V = @as(linux.O, @bitCast(@as(u32, 1)));
-const O_CREAT_V = @as(linux.O, @bitCast(@as(u32, 64)));
-const O_TRUNC_V = @as(linux.O, @bitCast(@as(u32, 512)));
+const O_RDONLY_V: u32 = @as(u32, 0);
+const O_WRONLY_V: u32 = @as(u32, 1);
+const O_CREAT_V: u32 = @as(u32, 64);
+const O_TRUNC_V: u32 = @as(u32, 512);
 
 const Record = struct {
     start: u32,
@@ -43,10 +43,18 @@ pub const Dataset = struct {
         return Dataset{};
     }
 
+    inline fn toO(v: u32) linux.O {
+        return @enumFromInt(v);
+    }
+
+    inline fn toOLinux(v: u32) linux.O {
+        return @as(linux.O, @bitCast(v));
+    }
+
     fn mmapFile(fd: i32, file_size: u64) ?[]align(PAGE_SIZE) const u8 {
         if (fd < 0) return null;
-        const prot = PROT_READ;
-        const flags = @as(linux.MAP, @bitCast(@as(u32, 0) | @as(u32, 1)));
+        const prot: linux.PROT = @as(linux.PROT, @bitCast(PROT_READ));
+        const flags: linux.MAP = @as(linux.MAP, @bitCast(MAP_FILE | MAP_SHARED));
         const addr = linux.mmap(null, file_size, prot, flags, fd, 0);
         if (@as(isize, @intCast(addr)) < 0) return null;
         return @as([*]align(PAGE_SIZE) const u8, @ptrFromInt(addr))[0..file_size];
@@ -72,17 +80,17 @@ pub const Dataset = struct {
         const offsets_path_s = std.fmt.bufPrint(&offsets_path, "{s}/offsets.bin", .{data_dir}) catch return error.OpenFailed;
         _ = offsets_path_s;
 
-        d.vectors_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &vectors_path), O_RDONLY_V, 0)));
+        d.vectors_fd = @as(i32, @intCast(linux.open(&vectors_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
         if (d.vectors_fd < 0) return error.OpenFailed;
-        d.labels_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &labels_path), O_RDONLY_V, 0)));
+        d.labels_fd = @as(i32, @intCast(linux.open(&labels_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
         if (d.labels_fd < 0) return error.OpenFailed;
-        d.centroids_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &centroids_path), O_RDONLY_V, 0)));
+        d.centroids_fd = @as(i32, @intCast(linux.open(&centroids_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
         if (d.centroids_fd < 0) return error.OpenFailed;
-        d.cluster_offsets_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &cluster_offsets_path), O_RDONLY_V, 0)));
+        d.cluster_offsets_fd = @as(i32, @intCast(linux.open(&cluster_offsets_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
         if (d.cluster_offsets_fd < 0) return error.OpenFailed;
-        d.scales_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &scales_path), O_RDONLY_V, 0)));
+        d.scales_fd = @as(i32, @intCast(linux.open(&scales_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
         if (d.scales_fd < 0) return error.OpenFailed;
-        d.offsets_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &offsets_path), O_RDONLY_V, 0)));
+        d.offsets_fd = @as(i32, @intCast(linux.open(&offsets_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
         if (d.offsets_fd < 0) return error.OpenFailed;
 
         errdefer _ = linux.close(d.vectors_fd);
