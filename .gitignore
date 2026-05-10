@@ -42,4 +42,5 @@ artifacts/rinha-official-result.json
 # Tooling
 .agents/
 .opencode/
+opencode.json
 .ralph/
