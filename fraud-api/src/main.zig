@@ -3,7 +3,7 @@ const http = @import("http.zig");
 const router = @import("router.zig");
 
 pub fn main() !void {
-    const instance_id = std.process.env.get("INSTANCE_ID") orelse "1";
+    const instance_id = "1";
     try http.createSocketDir();
 
     const sock_fd = try http.createAndBindUdsSocket(instance_id);

@@ -1,9 +1,19 @@
-FROM oven/bun:1-debian
+FROM alpine:3.19 AS builder
+
+RUN apk add --no-cache curl xz
+
+RUN curl -L -o /tmp/zig.tar.xz https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz && \
+    tar -xf /tmp/zig.tar.xz -C /opt && \
+    ln -s /opt/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig && \
+    rm /tmp/zig.tar.xz
 
 WORKDIR /app
-COPY package.json ./
-RUN bun install --frozen-lockfile
+COPY src/main.zig src/http.zig src/router.zig src/payload.zig src/dataset.zig src/scorer.zig src/quantization.zig src/response.zig ./
 
-COPY src ./src
+RUN zig build-exe main.zig -O ReleaseSmall
 
-CMD ["bun", "src/index.ts"]
+FROM alpine:3.19
+
+COPY --from=builder /app/main /app/main
+
+CMD ["/app/main"]

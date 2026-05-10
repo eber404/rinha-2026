@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
-const DATA_DIR = "./data";
+const DATA_DIR = "/app/data";
 mkdirSync(DATA_DIR, { recursive: true });
 
 interface Record {
@@ -8,7 +8,7 @@ interface Record {
   label: string;
 }
 
-const DATA_FILE = "../fraud-api/data/references.json";
+const DATA_FILE = "/app/data/references.json";
 
 console.log("Reading references.json...");
 const raw = readFileSync(DATA_FILE, "utf8");

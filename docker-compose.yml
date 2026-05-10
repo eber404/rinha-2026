@@ -1,4 +1,14 @@
 services:
+  preprocess:
+    build:
+      context: ./preprocess
+      dockerfile: Dockerfile
+    image: preprocess:latest
+    container_name: preprocess
+    volumes:
+      - ./data:/app/data
+    working_dir: /app
+
   fraud-api-1:
     build:
       context: ./fraud-api
@@ -7,13 +17,15 @@ services:
     container_name: fraud-api-1
     environment:
       - INSTANCE_ID=1
-      - PORT=8080
-      - DATA_DIR=/app/data
     volumes:
-      - ./fraud-api/data:/app/data
+      - ./sockets:/tmp/rinha
+      - ./data:/data:ro
     networks:
       - rinha-net
     restart: on-failure
+    depends_on:
+      preprocess:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -28,13 +40,15 @@ services:
     container_name: fraud-api-2
     environment:
       - INSTANCE_ID=2
-      - PORT=8080
-      - DATA_DIR=/app/data
     volumes:
-      - ./fraud-api/data:/app/data
+      - ./sockets:/tmp/rinha
+      - ./data:/data:ro
     networks:
       - rinha-net
     restart: on-failure
+    depends_on:
+      preprocess:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -49,6 +63,8 @@ services:
     container_name: load-balancer
     ports:
       - "9999:9999"
+    volumes:
+      - ./sockets:/tmp/rinha
     networks:
       - rinha-net
     restart: on-failure
