@@ -1,22 +1,7 @@
 const std = @import("std");
+const payload = @import("payload.zig");
 
-pub const Features = struct {
-    transaction_amount: f32 = 0.0,
-    transaction_installments: i32 = 0,
-    transaction_hour: u8 = 0,
-    customer_avg_amount: f32 = 0.0,
-    customer_tx_count_24h: i32 = 0,
-    merchant_mcc: u16 = 0,
-    terminal_km_from_home: f32 = 0.0,
-    terminal_is_online: bool = false,
-    terminal_card_present: bool = false,
-    terminal_known_merchants: i32 = 0,
-    last_transaction_minutes: i32 = 0,
-    last_transaction_km_from_current: f32 = 0.0,
-    merchant_avg_amount: f32 = 0.0,
-    requested_at_hour: u8 = 0,
-};
-
+pub const Features = payload.Features;
 pub const QueryVector = [16]i8;
 
 pub const QUANTIZATION_SCALES: [14]f32 = .{

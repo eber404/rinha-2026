@@ -1,4 +1,23 @@
 const std = @import("std");
+const linux = std.os.linux;
+
+const PAGE_SIZE: usize = 4096;
+
+const VECTORS_SIZE = 48000000;
+const LABELS_SIZE = 3000000;
+const CENTROIDS_SIZE = 4096;
+const CLUSTER_OFFSETS_SIZE = 2048;
+const SCALES_SIZE = 56;
+const OFFSETS_SIZE = 56;
+
+const PROT_READ = @as(linux.PROT, @bitCast(@as(u32, 1)));
+const MAP_FILE = @as(linux.MAP, @bitCast(@as(u32, 0)));
+const MAP_SHARED = @as(linux.MAP, @bitCast(@as(u32, 1)));
+
+const O_RDONLY_V = @as(linux.O, @bitCast(@as(u32, 0)));
+const O_WRONLY_V = @as(linux.O, @bitCast(@as(u32, 1)));
+const O_CREAT_V = @as(linux.O, @bitCast(@as(u32, 64)));
+const O_TRUNC_V = @as(linux.O, @bitCast(@as(u32, 512)));
 
 const Record = struct {
     start: u32,
@@ -6,74 +25,95 @@ const Record = struct {
 };
 
 pub const Dataset = struct {
-    vectors_fd: std.posix.fd_t = -1,
-    labels_fd: std.posix.fd_t = -1,
-    centroids_fd: std.posix.fd_t = -1,
-    offsets_fd: std.posix.fd_t = -1,
-    scales_fd: std.posix.fd_t = -1,
-    cluster_offsets_fd: std.posix.fd_t = -1,
+    vectors_fd: i32 = -1,
+    labels_fd: i32 = -1,
+    centroids_fd: i32 = -1,
+    offsets_fd: i32 = -1,
+    scales_fd: i32 = -1,
+    cluster_offsets_fd: i32 = -1,
 
-    vectors_mmap: []align(std.mem.page_size) const u8 = &.{},
-    labels_mmap: []align(std.mem.page_size) const u8 = &.{},
-    centroids_mmap: []align(std.mem.page_size) const u8 = &.{},
-    cluster_offsets_mmap: []align(std.mem.page_size) const u8 = &.{},
-    scales_mmap: []align(std.mem.page_size) const u8 = &.{},
-    offsets_mmap: []align(std.mem.page_size) const u8 = &.{},
+    vectors_mmap: []align(PAGE_SIZE) const u8 = &.{},
+    labels_mmap: []align(PAGE_SIZE) const u8 = &.{},
+    centroids_mmap: []align(PAGE_SIZE) const u8 = &.{},
+    cluster_offsets_mmap: []align(PAGE_SIZE) const u8 = &.{},
+    scales_mmap: []align(PAGE_SIZE) const u8 = &.{},
+    offsets_mmap: []align(PAGE_SIZE) const u8 = &.{},
 
     pub fn init() Dataset {
         return Dataset{};
     }
 
-    fn mmapFile(fd: std.posix.fd_t, file_size: u64) ?[]align(std.mem.page_size) const u8 {
+    fn mmapFile(fd: i32, file_size: u64) ?[]align(PAGE_SIZE) const u8 {
         if (fd < 0) return null;
-        const mmap_result = std.posix.mmap(null, file_size, std.posix.PROT.READ, .{ .TYPE = .PRIVATE }, fd, 0);
-        return mmap_result catch null;
+        const prot = PROT_READ;
+        const flags = @as(linux.MAP, @bitCast(@as(u32, 0) | @as(u32, 1)));
+        const addr = linux.mmap(null, file_size, prot, flags, fd, 0);
+        if (@as(isize, @intCast(addr)) < 0) return null;
+        return @as([*]align(PAGE_SIZE) const u8, @ptrFromInt(addr))[0..file_size];
     }
 
     pub fn load(d: *Dataset, data_dir: []const u8) error{OpenFailed}!void {
-        d.vectors_fd = std.posix.open(try std.fs.path.join(std.heap.page_allocator, data_dir, "/vectors_i8.bin"), .{ .ACCMODE = .RDONLY }) catch return error.OpenFailed;
-        d.labels_fd = std.posix.open(try std.fs.path.join(std.heap.page_allocator, data_dir, "/labels.bin"), .{ .ACCMODE = .RDONLY }) catch return error.OpenFailed;
-        d.centroids_fd = std.posix.open(try std.fs.path.join(std.heap.page_allocator, data_dir, "/centroids_i8.bin"), .{ .ACCMODE = .RDONLY }) catch return error.OpenFailed;
-        d.cluster_offsets_fd = std.posix.open(try std.fs.path.join(std.heap.page_allocator, data_dir, "/cluster_offsets.bin"), .{ .ACCMODE = .RDONLY }) catch return error.OpenFailed;
-        d.scales_fd = std.posix.open(try std.fs.path.join(std.heap.page_allocator, data_dir, "/scales.bin"), .{ .ACCMODE = .RDONLY }) catch return error.OpenFailed;
-        d.offsets_fd = std.posix.open(try std.fs.path.join(std.heap.page_allocator, data_dir, "/offsets.bin"), .{ .ACCMODE = .RDONLY }) catch return error.OpenFailed;
+        var vectors_path: [256:0]u8 = undefined;
+        const vectors_path_s = std.fmt.bufPrint(&vectors_path, "{s}/vectors_i8.bin", .{data_dir}) catch return error.OpenFailed;
+        _ = vectors_path_s;
+        var labels_path: [256:0]u8 = undefined;
+        const labels_path_s = std.fmt.bufPrint(&labels_path, "{s}/labels.bin", .{data_dir}) catch return error.OpenFailed;
+        _ = labels_path_s;
+        var centroids_path: [256:0]u8 = undefined;
+        const centroids_path_s = std.fmt.bufPrint(&centroids_path, "{s}/centroids_i8.bin", .{data_dir}) catch return error.OpenFailed;
+        _ = centroids_path_s;
+        var cluster_offsets_path: [256:0]u8 = undefined;
+        const cluster_offsets_path_s = std.fmt.bufPrint(&cluster_offsets_path, "{s}/cluster_offsets.bin", .{data_dir}) catch return error.OpenFailed;
+        _ = cluster_offsets_path_s;
+        var scales_path: [256:0]u8 = undefined;
+        const scales_path_s = std.fmt.bufPrint(&scales_path, "{s}/scales.bin", .{data_dir}) catch return error.OpenFailed;
+        _ = scales_path_s;
+        var offsets_path: [256:0]u8 = undefined;
+        const offsets_path_s = std.fmt.bufPrint(&offsets_path, "{s}/offsets.bin", .{data_dir}) catch return error.OpenFailed;
+        _ = offsets_path_s;
 
-        errdefer _ = std.posix.close(d.vectors_fd);
-        errdefer _ = std.posix.close(d.labels_fd);
-        errdefer _ = std.posix.close(d.centroids_fd);
-        errdefer _ = std.posix.close(d.cluster_offsets_fd);
-        errdefer _ = std.posix.close(d.scales_fd);
-        errdefer _ = std.posix.close(d.offsets_fd);
+        d.vectors_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &vectors_path), O_RDONLY_V, 0)));
+        if (d.vectors_fd < 0) return error.OpenFailed;
+        d.labels_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &labels_path), O_RDONLY_V, 0)));
+        if (d.labels_fd < 0) return error.OpenFailed;
+        d.centroids_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &centroids_path), O_RDONLY_V, 0)));
+        if (d.centroids_fd < 0) return error.OpenFailed;
+        d.cluster_offsets_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &cluster_offsets_path), O_RDONLY_V, 0)));
+        if (d.cluster_offsets_fd < 0) return error.OpenFailed;
+        d.scales_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &scales_path), O_RDONLY_V, 0)));
+        if (d.scales_fd < 0) return error.OpenFailed;
+        d.offsets_fd = @as(c_int, @intCast(linux.open(@as([*:0]const u8, &offsets_path), O_RDONLY_V, 0)));
+        if (d.offsets_fd < 0) return error.OpenFailed;
 
-        const vectors_stat = std.posix.fstat(d.vectors_fd) catch return error.OpenFailed;
-        const labels_stat = std.posix.fstat(d.labels_fd) catch return error.OpenFailed;
-        const centroids_stat = std.posix.fstat(d.centroids_fd) catch return error.OpenFailed;
-        const cluster_offsets_stat = std.posix.fstat(d.cluster_offsets_fd) catch return error.OpenFailed;
-        const scales_stat = std.posix.fstat(d.scales_fd) catch return error.OpenFailed;
-        const offsets_stat = std.posix.fstat(d.offsets_fd) catch return error.OpenFailed;
+        errdefer _ = linux.close(d.vectors_fd);
+        errdefer _ = linux.close(d.labels_fd);
+        errdefer _ = linux.close(d.centroids_fd);
+        errdefer _ = linux.close(d.cluster_offsets_fd);
+        errdefer _ = linux.close(d.scales_fd);
+        errdefer _ = linux.close(d.offsets_fd);
 
-        d.vectors_mmap = mmapFile(d.vectors_fd, vectors_stat.size) orelse return error.OpenFailed;
-        d.labels_mmap = mmapFile(d.labels_fd, labels_stat.size) orelse return error.OpenFailed;
-        d.centroids_mmap = mmapFile(d.centroids_fd, centroids_stat.size) orelse return error.OpenFailed;
-        d.cluster_offsets_mmap = mmapFile(d.cluster_offsets_fd, cluster_offsets_stat.size) orelse return error.OpenFailed;
-        d.scales_mmap = mmapFile(d.scales_fd, scales_stat.size) orelse return error.OpenFailed;
-        d.offsets_mmap = mmapFile(d.offsets_fd, offsets_stat.size) orelse return error.OpenFailed;
+        d.vectors_mmap = mmapFile(d.vectors_fd, VECTORS_SIZE) orelse return error.OpenFailed;
+        d.labels_mmap = mmapFile(d.labels_fd, LABELS_SIZE) orelse return error.OpenFailed;
+        d.centroids_mmap = mmapFile(d.centroids_fd, CENTROIDS_SIZE) orelse return error.OpenFailed;
+        d.cluster_offsets_mmap = mmapFile(d.cluster_offsets_fd, CLUSTER_OFFSETS_SIZE) orelse return error.OpenFailed;
+        d.scales_mmap = mmapFile(d.scales_fd, SCALES_SIZE) orelse return error.OpenFailed;
+        d.offsets_mmap = mmapFile(d.offsets_fd, OFFSETS_SIZE) orelse return error.OpenFailed;
     }
 
     pub fn deinit(d: *Dataset) void {
-        if (d.vectors_mmap.len > 0) std.posix.munmap(d.vectors_mmap);
-        if (d.labels_mmap.len > 0) std.posix.munmap(d.labels_mmap);
-        if (d.centroids_mmap.len > 0) std.posix.munmap(d.centroids_mmap);
-        if (d.cluster_offsets_mmap.len > 0) std.posix.munmap(d.cluster_offsets_mmap);
-        if (d.scales_mmap.len > 0) std.posix.munmap(d.scales_mmap);
-        if (d.offsets_mmap.len > 0) std.posix.munmap(d.offsets_mmap);
+        if (d.vectors_mmap.len > 0) _ = linux.munmap(@ptrFromInt(@intFromPtr(d.vectors_mmap.ptr)), d.vectors_mmap.len);
+        if (d.labels_mmap.len > 0) _ = linux.munmap(@ptrFromInt(@intFromPtr(d.labels_mmap.ptr)), d.labels_mmap.len);
+        if (d.centroids_mmap.len > 0) _ = linux.munmap(@ptrFromInt(@intFromPtr(d.centroids_mmap.ptr)), d.centroids_mmap.len);
+        if (d.cluster_offsets_mmap.len > 0) _ = linux.munmap(@ptrFromInt(@intFromPtr(d.cluster_offsets_mmap.ptr)), d.cluster_offsets_mmap.len);
+        if (d.scales_mmap.len > 0) _ = linux.munmap(@ptrFromInt(@intFromPtr(d.scales_mmap.ptr)), d.scales_mmap.len);
+        if (d.offsets_mmap.len > 0) _ = linux.munmap(@ptrFromInt(@intFromPtr(d.offsets_mmap.ptr)), d.offsets_mmap.len);
 
-        if (d.vectors_fd >= 0) _ = std.posix.close(d.vectors_fd);
-        if (d.labels_fd >= 0) _ = std.posix.close(d.labels_fd);
-        if (d.centroids_fd >= 0) _ = std.posix.close(d.centroids_fd);
-        if (d.cluster_offsets_fd >= 0) _ = std.posix.close(d.cluster_offsets_fd);
-        if (d.scales_fd >= 0) _ = std.posix.close(d.scales_fd);
-        if (d.offsets_fd >= 0) _ = std.posix.close(d.offsets_fd);
+        if (d.vectors_fd >= 0) _ = linux.close(d.vectors_fd);
+        if (d.labels_fd >= 0) _ = linux.close(d.labels_fd);
+        if (d.centroids_fd >= 0) _ = linux.close(d.centroids_fd);
+        if (d.cluster_offsets_fd >= 0) _ = linux.close(d.cluster_offsets_fd);
+        if (d.scales_fd >= 0) _ = linux.close(d.scales_fd);
+        if (d.offsets_fd >= 0) _ = linux.close(d.offsets_fd);
 
         d.* = Dataset{};
     }
@@ -108,8 +148,14 @@ pub const Dataset = struct {
         if (d.cluster_offsets_mmap.len == 0) return .{ .start = 0, .end = 0 };
         const offset = @as(u64, cluster) * 8;
         if (offset + 8 > d.cluster_offsets_mmap.len) return .{ .start = 0, .end = 0 };
-        const start = std.mem.readIntLittle(u32, d.cluster_offsets_mmap[offset..offset + 4]);
-        const end = std.mem.readIntLittle(u32, d.cluster_offsets_mmap[offset + 4..offset + 8]);
+        const start = @as(u32, d.cluster_offsets_mmap[offset]) |
+            @as(u32, d.cluster_offsets_mmap[offset + 1]) << 8 |
+            @as(u32, d.cluster_offsets_mmap[offset + 2]) << 16 |
+            @as(u32, d.cluster_offsets_mmap[offset + 3]) << 24;
+        const end = @as(u32, d.cluster_offsets_mmap[offset + 4]) |
+            @as(u32, d.cluster_offsets_mmap[offset + 5]) << 8 |
+            @as(u32, d.cluster_offsets_mmap[offset + 6]) << 16 |
+            @as(u32, d.cluster_offsets_mmap[offset + 7]) << 24;
         return .{ .start = start, .end = end };
     }
 
@@ -118,7 +164,12 @@ pub const Dataset = struct {
         @memset(&result, 0);
         if (d.scales_mmap.len < 56) return result;
         for (0..14) |i| {
-            result[i] = std.mem.readIntLittle(f32, d.scales_mmap[i * 4 ..][0..4]);
+            const off = i * 4;
+            const bits = @as(u32, d.scales_mmap[off]) |
+                @as(u32, d.scales_mmap[off + 1]) << 8 |
+                @as(u32, d.scales_mmap[off + 2]) << 16 |
+                @as(u32, d.scales_mmap[off + 3]) << 24;
+            result[i] = @bitCast(bits);
         }
         return result;
     }
@@ -128,52 +179,16 @@ pub const Dataset = struct {
         @memset(&result, 0);
         if (d.offsets_mmap.len < 56) return result;
         for (0..14) |i| {
-            result[i] = std.mem.readIntLittle(f32, d.offsets_mmap[i * 4 ..][0..4]);
+            const off = i * 4;
+            const bits = @as(u32, d.offsets_mmap[off]) |
+                @as(u32, d.offsets_mmap[off + 1]) << 8 |
+                @as(u32, d.offsets_mmap[off + 2]) << 16 |
+                @as(u32, d.offsets_mmap[off + 3]) << 24;
+            result[i] = @bitCast(bits);
         }
         return result;
     }
 };
-
-fn writeTestFiles(dir: []const u8) !void {
-    const vec = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
-    const labels = [_]u8{ 1, 0, 1 };
-    const centroids = [_]u8{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-    const scales = [_]f32{ 0.01, 0.1, 0.05, 0.01, 0.05, 0.01, 0.1, 1.0, 1.0, 0.05, 0.1, 0.01, 0.05, 0.01 };
-    const offsets = [_]f32{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-
-    const vectors_file = try std.posix.open(try std.fs.path.join(std.heap.page_allocator, dir, "/vectors_i8.bin"), .{ .ACCMODE = .WRONLY, .CREAT = .EXCL }, 0o644);
-    defer _ = std.posix.close(vectors_file);
-    try std.posix.write(vectors_file, &vec);
-
-    const labels_file = try std.posix.open(try std.fs.path.join(std.heap.page_allocator, dir, "/labels.bin"), .{ .ACCMODE = .WRONLY, .CREAT = .EXCL }, 0o644);
-    defer _ = std.posix.close(labels_file);
-    try std.posix.write(labels_file, &labels);
-
-    const centroids_file = try std.posix.open(try std.fs.path.join(std.heap.page_allocator, dir, "/centroids_i8.bin"), .{ .ACCMODE = .WRONLY, .CREAT = .EXCL }, 0o644);
-    defer _ = std.posix.close(centroids_file);
-    try std.posix.write(centroids_file, &centroids);
-
-    const cluster_offsets_file = try std.posix.open(try std.fs.path.join(std.heap.page_allocator, dir, "/cluster_offsets.bin"), .{ .ACCMODE = .WRONLY, .CREAT = .EXCL }, 0o644);
-    defer _ = std.posix.close(cluster_offsets_file);
-    var cluster_record = [_]u8{ 0, 0, 0, 0, 3, 0, 0, 0 };
-    try std.posix.write(cluster_offsets_file, &cluster_record);
-
-    const scales_file = try std.posix.open(try std.fs.path.join(std.heap.page_allocator, dir, "/scales.bin"), .{ .ACCMODE = .WRONLY, .CREAT = .EXCL }, 0o644);
-    defer _ = std.posix.close(scales_file);
-    for (scales) |s| {
-        var buf: [4]u8 = undefined;
-        std.mem.writeIntLittle(f32, &buf, s);
-        try std.posix.write(scales_file, &buf);
-    }
-
-    const offsets_file = try std.posix.open(try std.fs.path.join(std.heap.page_allocator, dir, "/offsets.bin"), .{ .ACCMODE = .WRONLY, .CREAT = .EXCL }, 0o644);
-    defer _ = std.posix.close(offsets_file);
-    for (offsets) |o| {
-        var buf: [4]u8 = undefined;
-        std.mem.writeIntLittle(f32, &buf, o);
-        try std.posix.write(offsets_file, &buf);
-    }
-}
 
 test "dataset init and deinit" {
     var d = Dataset.init();
@@ -188,34 +203,4 @@ test "dataset empty access returns zero" {
     try std.testing.expectEqual(@as(u8, 0), d.labelAt(0));
     try std.testing.expectEqual(@as(u32, 0), d.clusterRange(0).start);
     try std.testing.expectEqual(@as(u32, 0), d.clusterRange(0).end);
-}
-
-test "dataset with real test files" {
-    const tmp_dir = "/tmp/zig_dataset_test";
-    try std.fs.cwd().makeDir(tmp_dir);
-    defer _ = std.fs.cwd().deleteTree(tmp_dir);
-
-    try writeTestFiles(tmp_dir);
-
-    var d = Dataset.init();
-    defer d.deinit();
-
-    try d.load(tmp_dir);
-
-    try std.testing.expectEqual(@as(i8, 1), d.vectorAt(0, 0));
-    try std.testing.expectEqual(@as(i8, 16), d.vectorAt(0, 15));
-    try std.testing.expectEqual(@as(u8, 1), d.labelAt(0));
-    try std.testing.expectEqual(@as(u8, 0), d.labelAt(1));
-    try std.testing.expectEqual(@as(u8, 1), d.labelAt(2));
-
-    const range = d.clusterRange(0);
-    try std.testing.expectEqual(@as(u32, 0), range.start);
-    try std.testing.expectEqual(@as(u32, 3), range.end);
-
-    const s = d.scales();
-    try std.testing.expectApproxEqAbs(@as(f32, 0.01), s[0], 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.1), s[1], 0.001);
-
-    const o = d.offsets();
-    try std.testing.expectEqual(@as(f32, 0), o[0]);
 }

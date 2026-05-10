@@ -82,25 +82,28 @@ pub const Scorer = struct {
         @memset(&centroid_dists, 0);
 
         const clusters_to_scan = @min(s.n_clusters, 256);
-        for (0..clusters_to_scan) |i| {
-            const c = s.dataset.centroidAt(@as(u32, i));
+        var i: u32 = 0;
+        while (i < clusters_to_scan) : (i += 1) {
+            const c = s.dataset.centroidAt(i);
             centroid_dists[i] = distance(query, &c);
         }
 
         var selected: [256]bool = undefined;
-        for (0..256) |i| selected[i] = false;
+        for (0..256) |sel_i| selected[sel_i] = false;
 
         const nprobe_count = @min(nprobe, s.n_clusters);
-        for (0..nprobe_count) |i| {
+        var probe_i: u32 = 0;
+        while (probe_i < nprobe_count) : (probe_i += 1) {
             var best_idx: u32 = 0;
             var best_dist: i32 = std.math.maxInt(i32);
-            for (0..clusters_to_scan) |j| {
+            var j: u32 = 0;
+            while (j < clusters_to_scan) : (j += 1) {
                 if (!selected[j] and centroid_dists[j] < best_dist) {
                     best_dist = centroid_dists[j];
-                    best_idx = @as(u32, j);
+                    best_idx = j;
                 }
             }
-            result[i] = best_idx;
+            result[probe_i] = best_idx;
             selected[best_idx] = true;
         }
 

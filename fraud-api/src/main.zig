@@ -5,6 +5,8 @@ const router = @import("router.zig");
 pub fn main() void {
     const instance_id = "1";
 
+    router.initScorer("/data");
+
     http.createSocketDir() catch return;
     const sock_fd = http.createAndBindUdsSocket(instance_id) catch |err| {
         std.debug.print("failed to bind: {}\n", .{err});

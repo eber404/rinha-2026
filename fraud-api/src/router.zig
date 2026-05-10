@@ -1,12 +1,26 @@
 const std = @import("std");
 const payload = @import("payload.zig");
+const quantization = @import("quantization.zig");
+const scorer = @import("scorer.zig");
+const dataset = @import("dataset.zig");
 
 const static_404 = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
 const static_405 = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 17\r\n\r\nMethod Not Allowed";
 
 var fraud_response_buf: [2048]u8 = undefined;
-
 var ready_http_buf: [2048]u8 = undefined;
+
+var global_dataset: dataset.Dataset = undefined;
+var global_scorer: scorer.Scorer = undefined;
+var scorer_initialized = false;
+
+pub fn initScorer(data_dir: []const u8) void {
+    if (scorer_initialized) return;
+    global_dataset = dataset.Dataset.init();
+    global_dataset.load(data_dir) catch return;
+    global_scorer = scorer.Scorer.init(&global_dataset);
+    scorer_initialized = true;
+}
 
 pub fn route(method: []const u8, path: []const u8, body: []const u8, instance_id: []const u8) []const u8 {
     if (path.len == 12 and std.mem.eql(u8, path, "/fraud-score")) {
@@ -131,8 +145,9 @@ fn computeFraudScore(f: payload.Features) f32 {
 
 fn handleFraudScore(body: []const u8, instance_id: []const u8) []const u8 {
     const f = payload.parsePayload(body);
-    const score = computeFraudScore(f);
-
+    const query_vec = quantization.quantize(&f);
+    const knn_score = global_scorer.score(&query_vec);
+    const score: f32 = knn_score;
     const approved = score < 0.6;
     var score_str_buf: [32]u8 = undefined;
     const score_str = std.fmt.bufPrint(&score_str_buf, "{d}", .{score}) catch unreachable;
