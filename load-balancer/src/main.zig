@@ -18,14 +18,22 @@ const UDS_PATHS = [NUM_BACKENDS][]const u8{
 var backend_idx: u32 = 0;
 
 pub fn main() void {
-    createSocketDir();
-    const listen_fd = createListenSocket() catch |err| {
-        std.debug.print("failed to listen: {}\n", .{err});
-        return;
-    };
-    defer _ = linux.close(listen_fd);
+    _ = linux.mkdir("/tmp/rinha", 0o755);
 
-    std.debug.print("LB listening on :9999\n", .{});
+    const listen_fd = @as(c_int, @intCast(linux.socket(AF_INET, SOCK_STREAM, 0)));
+    if (listen_fd < 0) return;
+
+    var opt: c_int = 1;
+    _ = linux.setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, std.mem.asBytes(&opt), 4);
+
+    var addr_bytes: [16]u8 = undefined;
+    @memset(&addr_bytes, 0);
+    const addr_ptr: [*]u16 = @ptrFromInt(@intFromPtr(&addr_bytes));
+    addr_ptr[0] = AF_INET;
+    addr_ptr[1] = @byteSwap(@as(u16, 9999));
+
+    _ = linux.bind(listen_fd, @ptrFromInt(@intFromPtr(&addr_bytes)), 16);
+    _ = linux.listen(listen_fd, 128);
 
     while (true) {
         const client_fd = @as(c_int, @intCast(linux.accept(listen_fd, null, null)));
@@ -46,29 +54,6 @@ pub fn main() void {
 
         _ = linux.close(client_fd);
     }
-}
-
-fn createSocketDir() void {
-    _ = linux.mkdir("/tmp/rinha", 0o755);
-}
-
-fn createListenSocket() !c_int {
-    const fd = @as(c_int, @intCast(linux.socket(AF_INET, SOCK_STREAM, 0)));
-    if (fd < 0) return error.SocketFailed;
-
-    var opt: c_int = 1;
-    _ = linux.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, std.mem.asBytes(&opt), 4);
-
-    var addr_bytes: [16]u8 = undefined;
-    @memset(&addr_bytes, 0);
-    const addr_ptr: [*]u16 = @ptrFromInt(@intFromPtr(&addr_bytes));
-    addr_ptr[0] = AF_INET;
-    addr_ptr[1] = @byteSwap(@as(u16, 9999));
-
-    if (linux.bind(fd, @ptrFromInt(@intFromPtr(&addr_bytes)), 16) != 0) return error.BindFailed;
-    if (linux.listen(fd, 128) != 0) return error.ListenFailed;
-
-    return fd;
 }
 
 fn findDoubleCrlf(buf: []const u8) ?usize {
