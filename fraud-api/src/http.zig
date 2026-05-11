@@ -155,38 +155,39 @@ pub fn readExact(rfd: c_int, buf: []u8, len: usize) !void {
 pub fn handleConnection(rfd: c_int, router: Router) !void {
     var buf: [BUFFER_SIZE]u8 = undefined;
 
+    var total: usize = 0;
     while (true) {
-        var total: usize = 0;
-        while (true) {
-            const n = linux.read(rfd, @ptrFromInt(@intFromPtr(&buf[total])), buf.len - total);
-            if (n < 0) return error.ReadFailed;
-            if (n == 0) return;
-            total += @as(usize, @intCast(n));
+        const n = linux.read(rfd, @ptrFromInt(@intFromPtr(&buf[total])), buf.len - total);
+        if (n < 0) return error.ReadFailed;
+        if (n == 0) return;
+        total += @as(usize, @intCast(n));
 
-            var i: usize = 0;
-            while (i + 3 < total) : (i += 1) {
-                if (buf[i] == '\r' and buf[i + 1] == '\n' and buf[i + 2] == '\r' and buf[i + 3] == '\n') {
-                    const headers = buf[0..total];
-                    const content_length = findContentLength(headers) orelse 0;
-                    const parsed = parseRequestLine(headers) orelse return;
+        var i: usize = 0;
+        while (i + 3 < total) : (i += 1) {
+            if (buf[i] == '\r' and buf[i + 1] == '\n' and buf[i + 2] == '\r' and buf[i + 3] == '\n') {
+                const headers = buf[0..total];
+                const content_length = findContentLength(headers) orelse 0;
+                const parsed = parseRequestLine(headers) orelse return;
 
-                    const header_end_pos = i + 4;
-                    const body_start = header_end_pos;
-                    const bytes_in_buf = total - header_end_pos;
+                const header_end_pos = i + 4;
+                const body_start = header_end_pos;
+                const bytes_in_buf = total - header_end_pos;
 
-                    if (bytes_in_buf < content_length) {
-                        try readExact(rfd, buf[total..buf.len], content_length - bytes_in_buf);
-                        total += content_length - bytes_in_buf;
-                    }
-
-                    const resp = router.route(parsed.method, parsed.path, buf[body_start..body_start + content_length]);
-                    _ = linux.write(rfd, resp.ptr, resp.len);
-                    break;
+                if (bytes_in_buf < content_length) {
+                    const needed = content_length - bytes_in_buf;
+                    const available = buf.len - total;
+                    if (needed > available) return error.BufferFull;
+                    try readExact(rfd, buf[total..buf.len], needed);
+                    total += needed;
                 }
+
+                const resp = router.route(parsed.method, parsed.path, buf[body_start..body_start + content_length]);
+                _ = linux.write(rfd, resp.ptr, resp.len);
+                return;
             }
-            if (total >= buf.len) return error.BufferFull;
-            break;
         }
+
+        if (total >= buf.len) return error.BufferFull;
     }
 }
 

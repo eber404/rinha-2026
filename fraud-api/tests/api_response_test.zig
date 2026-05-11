@@ -14,7 +14,7 @@ test "fraud-score response Content-Length matches actual body" {
 
     const cl_start = std.mem.indexOf(u8, resp, "Content-Length: ") orelse return error.NoContentLength;
     const cl_value_start = cl_start + 16;
-    const cl_value_end = std.mem.indexOf(u8, resp[cl_value_start..], "\r\n") orelse return error.NoContentLengthEnd;
+    const cl_value_end = cl_value_start + (std.mem.indexOf(u8, resp[cl_value_start..], "\r\n") orelse return error.NoContentLengthEnd);
     const cl_str = resp[cl_value_start..cl_value_end];
     const content_length = std.fmt.parseInt(usize, cl_str, 10) catch return error.InvalidContentLength;
 

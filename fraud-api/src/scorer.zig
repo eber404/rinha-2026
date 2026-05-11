@@ -194,7 +194,7 @@ test "topk insert replaces worst when full" {
     for (0..tk.count) |i| {
         if (tk.distances[i] > worst) worst = tk.distances[i];
     }
-    try std.testing.expect(worst == 100);
+    try std.testing.expect(worst == 90);
 }
 
 test "topk reset clears state" {

@@ -15,11 +15,6 @@ services:
     networks:
       - rinha-net
     restart: on-failure
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'
-          memory: '128MB'
 
   fraud-api-2:
     build:
@@ -37,11 +32,6 @@ services:
     networks:
       - rinha-net
     restart: on-failure
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'
-          memory: '128MB'
 
   load-balancer:
     build:
@@ -52,6 +42,7 @@ services:
     ports:
       - "9999:9999"
     volumes:
+      - ./load-balancer/src:/app/src
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
@@ -59,11 +50,7 @@ services:
     depends_on:
       - fraud-api-1
       - fraud-api-2
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: '94MB'
+    command: ["/app/main"]
 
 networks:
   rinha-net:

@@ -1,0 +1,9 @@
+{
+  "build_mtime": 1778447140,
+  "last_attempt": 11,
+  "last_pass": false,
+  "last_artifact": "artifacts/benchmark-2026-05-11-004256.json",
+  "last_score": -6000,
+  "last_failure_rate": "99.99%",
+  "issue": "LB threading causes crashes under 900 VU load. http_errors=13835/54100. Multi-threaded LB tested, still failing. Single-threaded works but can't handle load."
+}

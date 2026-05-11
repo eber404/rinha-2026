@@ -62,6 +62,7 @@ services:
         limits:
           cpus: '0.5'
           memory: '94MB'
+    command: ["/app/main"]
 
   preprocess:
     build:

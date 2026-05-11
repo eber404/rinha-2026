@@ -17,9 +17,7 @@ RUN zig build-exe main.zig -O ReleaseSmall -target aarch64-linux-musl -lc
 FROM alpine:3.19
 
 COPY --from=builder /app/main /app/main
-COPY watch-zig.sh /app/watch-zig.sh
-RUN chmod +x /app/watch-zig.sh
 
 EXPOSE 9999
 
-CMD ["sh", "/app/watch-zig.sh"]
+CMD ["/app/main"]
