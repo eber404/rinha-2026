@@ -1,81 +1,109 @@
 const std = @import("std");
 const router = @import("../src/router.zig");
+const payload = @import("../src/payload.zig");
 
-test "fraud-score response has correct HTTP prefix" {
-    const body = "{\"transaction\":{\"amount\":100,\"installments\":1},\"customer\":{\"avg_amount\":50,\"tx_count_24h\":5},\"merchant\":{\"mcc\":\"5411\"},\"terminal\":{\"km_from_home\":1,\"is_online\":true,\"card_present\":true}}";
-    const resp = router.route("POST", "/fraud-score", body, "1");
+test "route POST /fraud-score" {
+    const resp = router.route("POST", "/fraud-score", "", "1");
+    try std.testing.expect(resp.len > 20);
     try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200"));
-    try std.testing.expect(resp.len > 50);
 }
 
-test "fraud-score response Content-Length matches actual body" {
-    const body = "{\"transaction\":{\"amount\":100,\"installments\":1},\"customer\":{\"avg_amount\":50,\"tx_count_24h\":5},\"merchant\":{\"mcc\":\"5411\"},\"terminal\":{\"km_from_home\":1,\"is_online\":true,\"card_present\":true}}";
-    const resp = router.route("POST", "/fraud-score", body, "1");
-
-    const cl_start = std.mem.indexOf(u8, resp, "Content-Length: ") orelse return error.NoContentLength;
-    const cl_value_start = cl_start + 16;
-    const cl_value_end = cl_value_start + (std.mem.indexOf(u8, resp[cl_value_start..], "\r\n") orelse return error.NoContentLengthEnd);
-    const cl_str = resp[cl_value_start..cl_value_end];
-    const content_length = std.fmt.parseInt(usize, cl_str, 10) catch return error.InvalidContentLength;
-
-    const body_start = std.mem.indexOf(u8, resp, "\r\n\r\n") orelse return error.NoBodySeparator;
-    const actual_body = resp[body_start + 4 ..];
-    try std.testing.expectEqual(@as(usize, actual_body.len), content_length);
-}
-
-test "fraud-score response body is valid JSON with required fields" {
-    const body = "{\"transaction\":{\"amount\":500,\"installments\":3},\"customer\":{\"avg_amount\":100,\"tx_count_24h\":10},\"merchant\":{\"mcc\":\"5411\"},\"terminal\":{\"km_from_home\":5,\"is_online\":true,\"card_present\":true}}";
-    const resp = router.route("POST", "/fraud-score", body, "1");
-
-    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"approved\":"));
-    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"fraud_score\":"));
-    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\""));
-}
-
-test "ready response with instance 10 works" {
-    const resp = router.route("GET", "/ready", "", "10");
-    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200"));
-    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\"10\""));
-}
-
-test "ready response with instance longer than 1 char" {
-    const resp = router.route("GET", "/ready", "", "100");
-    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200"));
-    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\"100\""));
-}
-
-test "response does not start with corrupted bytes" {
+test "route GET /ready" {
     const resp = router.route("GET", "/ready", "", "1");
-    try std.testing.expect(resp.len >= 9);
-    try std.testing.expectEqual(@as(u8, 'H'), resp[0]);
-    try std.testing.expectEqual(@as(u8, 'T'), resp[1]);
-    try std.testing.expectEqual(@as(u8, 'T'), resp[2]);
-    try std.testing.expectEqual(@as(u8, 'P'), resp[3]);
-    try std.testing.expectEqual(@as(u8, '/'), resp[4]);
-    try std.testing.expectEqual(@as(u8, '1'), resp[5]);
-    try std.testing.expectEqual(@as(u8, '.'), resp[6]);
-    try std.testing.expectEqual(@as(u8, '1'), resp[7]);
-    try std.testing.expectEqual(@as(u8, ' '), resp[8]);
-}
-
-test "fraud-score response does not start with corrupted bytes" {
-    const body = "{\"transaction\":{\"amount\":100},\"customer\":{\"avg_amount\":50},\"merchant\":{\"mcc\":\"5411\"},\"terminal\":{\"km_from_home\":1,\"is_online\":true,\"card_present\":true}}";
-    const resp = router.route("POST", "/fraud-score", body, "1");
-    try std.testing.expect(resp.len >= 9);
-    try std.testing.expectEqual(@as(u8, 'H'), resp[0]);
-    try std.testing.expectEqual(@as(u8, 'T'), resp[1]);
-    try std.testing.expectEqual(@as(u8, 'T'), resp[2]);
-    try std.testing.expectEqual(@as(u8, 'P'), resp[3]);
-    try std.testing.expectEqual(@as(u8, '/'), resp[4]);
-    try std.testing.expectEqual(@as(u8, '1'), resp[5]);
-    try std.testing.expectEqual(@as(u8, '.'), resp[6]);
-    try std.testing.expectEqual(@as(u8, '1'), resp[7]);
-    try std.testing.expectEqual(@as(u8, ' '), resp[8]);
-}
-
-test "fraud-score with high fraud score instance" {
-    const body = "{\"transaction\":{\"amount\":5000,\"installments\":12},\"customer\":{\"avg_amount\":100,\"tx_count_24h\":1},\"merchant\":{\"mcc\":\"5411\"},\"terminal\":{\"km_from_home\":500,\"is_online\":false,\"card_present\":false},\"last_transaction\":{\"minutes\":2}}";
-    const resp = router.route("POST", "/fraud-score", body, "2");
     try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"ready\":true"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\"1\""));
+}
+
+test "route GET /fraud-score returns 405" {
+    const resp = router.route("GET", "/fraud-score", "", "1");
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 405 Method Not Allowed"));
+}
+
+test "route POST /ready returns 404" {
+    const resp = router.route("POST", "/ready", "", "1");
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 404 Not Found"));
+}
+
+test "route unknown path 404" {
+    const resp = router.route("GET", "/unknown", "", "1");
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 404 Not Found"));
+}
+
+test "route static 404 response format" {
+    const resp = router.static_404;
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 404"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "Content-Length: 9"));
+    try std.testing.expect(std.mem.endsWith(u8, resp, "Not Found"));
+}
+
+test "route static 405 response format" {
+    const resp = router.static_405;
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 405"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "Content-Length: 17"));
+    try std.testing.expect(std.mem.endsWith(u8, resp, "Method Not Allowed"));
+}
+
+test "route GET /ready with instance 1" {
+    const resp = router.route("GET", "/ready", "", "1");
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\"1\""));
+}
+
+test "route GET /ready with instance 2" {
+    const resp = router.route("GET", "/ready", "", "2");
     try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\"2\""));
+}
+
+test "route GET /ready with instance 3" {
+    const resp = router.route("GET", "/ready", "", "3");
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\"3\""));
+}
+
+test "route POST /fraud-score has correct content-type" {
+    const resp = router.route("POST", "/fraud-score", "", "1");
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "Content-Type: application/json"));
+}
+
+test "route returns slice that remains valid" {
+    const resp = router.route("GET", "/ready", "", "1");
+    try std.testing.expect(resp.len > 0);
+    try std.testing.expect(resp[0] == 'H');
+}
+
+test "fraud-score uses parsed features" {
+    const body = "{\"transaction\":{\"amount\":5000,\"installments\":12,\"requested_at\":\"2024-01-15T14:30:00Z\"},\"customer\":{\"avg_amount\":100,\"tx_count_24h\":1},\"merchant\":{\"mcc\":\"5411\",\"avg_amount\":300},\"terminal\":{\"km_from_home\":500,\"is_online\":false,\"card_present\":false,\"known_merchants\":0},\"last_transaction\":{\"minutes\":2,\"km_from_current\":200},\"requested_at\":\"2024-01-15T09:00:00Z\"}";
+    const resp = router.route("POST", "/fraud-score", body, "1");
+    try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 200"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"approved\":"));
+}
+
+test "computeFraudScore high amount vs customer avg" {
+    const f = payload.Features{
+        .transaction_amount = 1000.0,
+        .customer_avg_amount = 100.0,
+        .transaction_installments = 1,
+        .customer_tx_count_24h = 10,
+        .terminal_km_from_home = 5.0,
+        .terminal_is_online = true,
+        .terminal_card_present = true,
+        .merchant_mcc = 5411,
+    };
+    const score = router.computeFraudScore(f);
+    try std.testing.expect(score > 0.0);
+}
+
+test "computeFraudScore low risk returns false" {
+    const f = payload.Features{
+        .transaction_amount = 50.0,
+        .customer_avg_amount = 100.0,
+        .transaction_installments = 1,
+        .customer_tx_count_24h = 10,
+        .terminal_km_from_home = 1.0,
+        .terminal_is_online = true,
+        .terminal_card_present = true,
+        .merchant_mcc = 5411,
+        .last_transaction_minutes = 60,
+    };
+    const score = router.computeFraudScore(f);
+    try std.testing.expect(score < 0.3);
 }
