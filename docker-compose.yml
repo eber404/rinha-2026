@@ -5,8 +5,8 @@ services:
       context: ./fraud-api
       dockerfile: Dockerfile
     volumes:
-      - ./vector-index:/app/vector-index:rw
-      - ./tests:/app/tests:ro
+      - ./fraud-api/vector-index:/app/vector-index:rw
+      - ./fraud-api/tests:/app/tests:ro
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
@@ -34,7 +34,7 @@ services:
     ports:
       - '9999:9999'
     volumes:
-      - ./tests:/app/tests:ro
+      - ./load-balancer/tests:/app/tests:ro
       - rinha-sockets:/tmp/rinha
     environment:
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
