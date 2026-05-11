@@ -23,7 +23,6 @@ node_modules/
 
 # Docker/logs
 *.log
-sockets/
 
 # Coverage/cache
 coverage/
