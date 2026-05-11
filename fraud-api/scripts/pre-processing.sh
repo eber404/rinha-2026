@@ -26,8 +26,8 @@ done
 echo "=== Decompressing references ==="
 gunzip -f "$DATA_DIR/references.json.gz"
 
-echo "=== Compiling generator ==="
-zig build-exe src/generate.zig -O ReleaseSmall -target aarch64-linux-musl -lc
+echo "=== Compiling vector indexer ==="
+zig build-exe vector_indexer.zig -O ReleaseSmall -target aarch64-linux-musl -lc -femit-bin=./vector_indexer
 
-echo "=== Running generator ==="
-./generate
+echo "=== Running vector indexer ==="
+./vector_indexer

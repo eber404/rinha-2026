@@ -8,7 +8,7 @@ RUN curl -L -o /tmp/zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-li
     rm /tmp/zig.tar.xz
 
 WORKDIR /app
-COPY src/main.zig src/http.zig src/router.zig src/payload.zig src/dataset.zig src/scorer.zig src/quantization.zig src/response.zig src/generate.zig scripts/pre-processing.sh ./
+COPY src/main.zig src/http.zig src/router.zig src/payload.zig src/dataset.zig src/scorer.zig src/quantization.zig src/response.zig scripts/vector_indexer.zig scripts/pre-processing.sh ./
 
 RUN chmod +x pre-processing.sh && ./pre-processing.sh || true
 

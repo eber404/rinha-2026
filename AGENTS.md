@@ -32,7 +32,9 @@ load-balancer/    # LB Zig (TCP:9999 -> UDS)
 fraud-api/         # API Zig (HTTP + parser + scoring)
                   # - src/*.zig
                   # - vector-index/ (generated at build time)
-                  # - scripts/pre-processing.sh
+                  # - scripts/
+                  #     pre-processing.sh  # bootstrap: checks/generates index
+                  #     vector_indexer.zig # index generation logic
 shared/
   sockets/         # UDS socket files (gitignored)
 docker-compose.yml
