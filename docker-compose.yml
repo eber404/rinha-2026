@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./fraud-api/src:/app/src
-      - ./data:/app/data:ro
+      - ./fraud-api/vector-index:/app/vector-index:ro
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
@@ -24,7 +24,7 @@ services:
     environment:
       - INSTANCE_ID=2
       - UDS_PATH=/tmp/rinha/api-2.sock
-      - DATA_DIR=/app/data
+      - DATA_DIR=/app/vector-index
 
   load-balancer:
     build:

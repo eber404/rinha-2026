@@ -6,7 +6,7 @@ Monorepo for Rinha de Backend 2026.
 
 - **Load Balancer**: Zig (`load-balancer/src/main.zig`)
 - **API**: Zig (`fraud-api/src/*.zig`)
-- **Preprocess**: Bun (`preprocess/src/generate_index.bun`)
+- **Preprocessing**: Zig, runs at container build time
 
 ## Structure
 
@@ -16,9 +16,8 @@ load-balancer/   # Zig LB (TCP:9999 -> UDS)
                  # - nginx.conf
 fraud-api/       # Zig API (HTTP + payload + scorer)
                  # - src/*.zig
-preprocess/      # Bun index generation
-                # - src/generate_index.bun
-                # - scripts/download-and-convert.sh
+                 # - vector-index/ (binary index files)
+                 # - scripts/pre-processing.sh
 shared/
   sockets/       # UDS socket files
 docker-compose.yml

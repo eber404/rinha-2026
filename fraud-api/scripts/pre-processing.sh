@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-DATA_DIR="./data"
+DATA_DIR="./vector-index"
 mkdir -p "$DATA_DIR"
 
 echo "=== Checking if index exists ==="

@@ -10,7 +10,7 @@ pub fn main() void {
     else
         "1";
 
-    router.initScorer("/app/data");
+    router.initScorer("/app/vector-index");
 
     http.createSocketDir() catch return;
     const sock_fd = http.createAndBindUdsSocket(instance_id) catch |err| {
