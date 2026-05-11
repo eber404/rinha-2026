@@ -26,20 +26,28 @@ Monorepo for Rinha de Backend 2026. Entire hot path in Zig.
 ## Repository Structure
 
 ```
-load-balancer/    # LB Zig (TCP -> UDS)
+load-balancer/    # LB Zig (TCP:9999 -> UDS)
+                  # - src/main.zig
+                  # - nginx.conf (config)
 fraud-api/         # API Zig (HTTP + parser + scoring)
+                  # - src/*.zig
 preprocess/        # Bun scripts to generate index files
+                  # - src/generate_index.bun
 shared/
-  build/           # scripts to download/convert reference data
-  sockets/         # UDS socket files
+  build/           # scripts: download-and-convert.sh, download-data.sh
+  sockets/         # UDS socket files (gitignored)
 docker-compose.yml
+artifacts/          # benchmark/test results
+docs/              # plans and notes
 ```
 
 ## Operational Notes
 
 - Health endpoint: `GET /ready`
 - Scoring endpoint: `POST /fraud-score`
-- Run preprocess: `bun run src/generate_index.bun` (inside preprocess/)
+- Run preprocess: `bun run preprocess:run` (from root) or `cd preprocess && bun run src/generate_index.bun`
+- Build data: `bun run build:data` (uses shared/build/download-and-convert.sh)
+- Docker dev: `docker-compose up --build`
 - Official test: `make test-official`
 - Official result output: `artifacts/rinha-official-result.json`
 
