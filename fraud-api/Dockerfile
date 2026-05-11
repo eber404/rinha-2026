@@ -14,7 +14,7 @@ COPY build.zig.zon ./build.zig.zon
 COPY tests/ ./tests/
 COPY scripts/pre-processing.sh ./pre-processing.sh
 
-RUN rm -rf .zig-cache && ZIG_TARGET=x86_64-linux-musl zig build && chown -R 1000:1000 zig-out
+RUN rm -rf .zig-cache && zig build && chown -R 1000:1000 zig-out
 
 FROM alpine:latest
 
