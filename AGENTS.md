@@ -33,8 +33,8 @@ fraud-api/         # API Zig (HTTP + parser + scoring)
                   # - src/*.zig
 preprocess/        # Bun scripts to generate index files
                   # - src/generate_index.bun
+                  # - scripts/download-and-convert.sh, download-data.sh
 shared/
-  build/           # scripts: download-and-convert.sh, download-data.sh
   sockets/         # UDS socket files (gitignored)
 docker-compose.yml
 artifacts/          # benchmark/test results

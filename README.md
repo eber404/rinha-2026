@@ -17,9 +17,9 @@ load-balancer/   # Zig LB (TCP:9999 -> UDS)
 fraud-api/       # Zig API (HTTP + payload + scorer)
                  # - src/*.zig
 preprocess/      # Bun index generation
-                 # - src/generate_index.bun
+                # - src/generate_index.bun
+                # - scripts/download-and-convert.sh
 shared/
-  build/         # download/convert scripts
   sockets/       # UDS socket files
 docker-compose.yml
 artifacts/        # local benchmark/test results
