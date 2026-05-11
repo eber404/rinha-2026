@@ -8,6 +8,8 @@
     "fraud-api"
   ],
   "scripts": {
+    "preprocess:run": "cd preprocess && bun run src/generate_index.bun",
+    "preprocess:check": "cd preprocess && bun tsc --noEmit",
     "build:data": "./build/download-and-convert.sh",
     "dev:api": "cd fraud-api && bun run src/index.ts",
     "dev:lb": "cd load-balancer && zig build-exe src/main.zig && ./main",
