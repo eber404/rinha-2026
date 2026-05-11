@@ -13,7 +13,7 @@ Monorepo for Rinha de Backend 2026. Entire hot path in Zig.
 
 - **Load Balancer**: Zig, std.os.linux, TCP:9999 -> UDS round-robin
 - **Fraud API**: Zig, UDS HTTP parser + payload parser + quantization + scorer
-- **Preprocess**: Bun, generates binaries in `/data`
+- **Preprocess**: Bun, generates index binaries
 
 ## Design Principles
 
@@ -21,14 +21,17 @@ Monorepo for Rinha de Backend 2026. Entire hot path in Zig.
 - UDS between LB and API
 - Reference data in read-only mmap binary files
 - No heap allocation in the critical scoring loop
+- Hot-reload in docker-compose.yml for development
 
 ## Repository Structure
 
 ```
 load-balancer/    # LB Zig (TCP -> UDS)
-fraud-api/        # API Zig (HTTP + parser + scoring)
-preprocess/       # Bun scripts to generate index files
-docs/             # plans and notes
+fraud-api/         # API Zig (HTTP + parser + scoring)
+preprocess/        # Bun scripts to generate index files
+shared/
+  build/           # scripts to download/convert reference data
+  sockets/         # UDS socket files
 docker-compose.yml
 ```
 
@@ -36,6 +39,7 @@ docker-compose.yml
 
 - Health endpoint: `GET /ready`
 - Scoring endpoint: `POST /fraud-score`
+- Run preprocess: `bun run src/generate_index.bun` (inside preprocess/)
 - Official test: `make test-official`
 - Official result output: `artifacts/rinha-official-result.json`
 
