@@ -1,4 +1,5 @@
 const std = @import("std");
+const main = @import("../src/main.zig");
 const testing = std.testing;
 
 const EXTERNAL_PORT = 9999;

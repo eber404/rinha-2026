@@ -1,5 +1,5 @@
 const std = @import("std");
-const router = @import("router.zig");
+const router = @import("../src/router.zig");
 
 test "fraud-score response has correct HTTP prefix" {
     const body = "{\"transaction\":{\"amount\":100,\"installments\":1},\"customer\":{\"avg_amount\":50,\"tx_count_24h\":5},\"merchant\":{\"mcc\":\"5411\"},\"terminal\":{\"km_from_home\":1,\"is_online\":true,\"card_present\":true}}";

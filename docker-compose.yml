@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./fraud-api/src:/app/src
-      - ./fraud-api/vector-index:/app/vector-index:ro
+      - ./fraud-api/vector-index:/app/vector-index:rw
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
