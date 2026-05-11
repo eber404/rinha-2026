@@ -44,3 +44,4 @@ artifacts/rinha-official-result.json
 .opencode/
 opencode.json
 .ralph/
+.artifacts

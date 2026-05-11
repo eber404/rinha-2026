@@ -7,8 +7,6 @@ RUN curl -L -o /tmp/zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-li
     ln -s /opt/zig-x86_64-linux-0.16.0/zig /usr/local/bin/zig && \
     rm /tmp/zig.tar.xz
 
-RUN apk add --no-cache watchexec
-
 WORKDIR /app
 COPY src/main.zig src/http.zig src/router.zig src/payload.zig src/dataset.zig src/scorer.zig src/quantization.zig src/response.zig ./
 
@@ -16,10 +14,8 @@ RUN zig build-exe main.zig -O ReleaseSmall -target aarch64-linux-musl -lc
 
 FROM alpine:3.19
 
-RUN mkdir -p /tmp/rinha
+RUN apk add --no-cache watchexec
 
 COPY --from=builder /app/main /app/main
-COPY watch-zig.sh /app/watch-zig.sh
-RUN chmod +x /app/watch-zig.sh
 
-CMD ["sh", "/app/watch-zig.sh"]
+CMD ["watchexec", "-w", "/app/src", "-e", "zig", "--", "zig", "build-exe", "/app/src/main.zig", "-O", "ReleaseSmall", "-target", "aarch64-linux-musl", "-lc", "-femit-bin=/app/main", "&&", "/app/main"]

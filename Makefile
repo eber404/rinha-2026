@@ -2,10 +2,10 @@
 
 OFFICIAL_REPO_DIR := .cache/rinha-official
 OFFICIAL_REPO_URL := https://github.com/zanfranceschi/rinha-de-backend-2026
-BENCHMARK_FILE := artifacts/benchmark-$(shell date +%Y-%m-%d-%H%M%S).json
+BENCHMARK_FILE := .artifacts/benchmark-$(shell date +%Y-%m-%d-%H%M%S).json
 
 benchmark:
-	@mkdir -p .cache artifacts
+	@mkdir -p .cache .artifacts
 	@if [ ! -d "$(OFFICIAL_REPO_DIR)/.git" ]; then \
 		git clone --depth 1 "$(OFFICIAL_REPO_URL)" "$(OFFICIAL_REPO_DIR)"; \
 	else \
