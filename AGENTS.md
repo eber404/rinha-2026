@@ -45,8 +45,7 @@ docs/              # plans and notes
 
 - Health endpoint: `GET /ready`
 - Scoring endpoint: `POST /fraud-score`
-- Run preprocess: `bun run preprocess:run` (from root) or `cd preprocess && bun run src/generate_index.bun`
-- Build data: `bun run build:data` (uses shared/build/download-and-convert.sh)
+- Run preprocess: `cd preprocess && bun run src/generate_index.bun`
 - Docker dev: `docker-compose up --build`
 - Official test: `make test-official`
 - Official result output: `artifacts/rinha-official-result.json`

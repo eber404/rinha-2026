@@ -7,16 +7,23 @@ Monorepo for Rinha de Backend 2026.
 - **Load Balancer**: Zig (`load-balancer/src/main.zig`)
 - **API**: Zig (`fraud-api/src/*.zig`)
 - **Preprocess**: Bun (`preprocess/src/generate_index.bun`)
-- **Dataset**: binaries in `data/*.bin`
 
 ## Structure
 
 ```
 load-balancer/   # Zig LB (TCP:9999 -> UDS)
+                 # - src/main.zig
+                 # - nginx.conf
 fraud-api/       # Zig API (HTTP + payload + scorer)
-preprocess/      # Index and binary generation
+                 # - src/*.zig
+preprocess/      # Bun index generation
+                 # - src/generate_index.bun
+shared/
+  build/         # download/convert scripts
+  sockets/       # UDS socket files
+docker-compose.yml
+artifacts/        # local benchmark/test results
 docs/            # plans and notes
-artifacts/       # local benchmark/test results
 ```
 
 ## Endpoints
@@ -27,10 +34,10 @@ artifacts/       # local benchmark/test results
 ## Commands
 
 ```bash
-# Start local stack
-docker-compose up -d --build
+# Start local stack (with hot-reload)
+docker-compose up --build
 
-# Run official Rinha test and save result
+# Run official Rinha test
 make test-official
 ```
 
