@@ -11,6 +11,9 @@ services:
     networks:
       - rinha-net
     restart: on-failure
+    environment:
+      - INSTANCE_ID=1
+      - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
     deploy:
       resources:
         limits:
@@ -22,8 +25,6 @@ services:
     container_name: fraud-api-2
     environment:
       - INSTANCE_ID=2
-      - UDS_PATH=/tmp/rinha/api-2.sock
-      - DATA_DIR=/app/vector-index
 
   load-balancer:
     build:
@@ -34,6 +35,8 @@ services:
       - "9999:9999"
     volumes:
       - rinha-sockets:/tmp/rinha
+    environment:
+      - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
     networks:
       - rinha-net
     restart: on-failure
