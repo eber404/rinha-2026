@@ -43,8 +43,8 @@ pub const Dataset = struct {
         return Dataset{};
     }
 
-    inline fn toO(v: u32) linux.O {
-        return @enumFromInt(v);
+    inline fn toO(_: []const u8) linux.O {
+        return @bitCast(@as(u32, 0));
     }
 
     inline fn toOLinux(v: u32) linux.O {
@@ -80,17 +80,17 @@ pub const Dataset = struct {
         const offsets_path_s = std.fmt.bufPrint(&offsets_path, "{s}/offsets.bin", .{data_dir}) catch return error.OpenFailed;
         _ = offsets_path_s;
 
-        d.vectors_fd = @as(i32, @intCast(linux.open(&vectors_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
+        d.vectors_fd = @as(i32, @intCast(linux.open(&vectors_path, toO("r"), 0)));
         if (d.vectors_fd < 0) return error.OpenFailed;
-        d.labels_fd = @as(i32, @intCast(linux.open(&labels_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
+        d.labels_fd = @as(i32, @intCast(linux.open(&labels_path, toO("r"), 0)));
         if (d.labels_fd < 0) return error.OpenFailed;
-        d.centroids_fd = @as(i32, @intCast(linux.open(&centroids_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
+        d.centroids_fd = @as(i32, @intCast(linux.open(&centroids_path, toO("r"), 0)));
         if (d.centroids_fd < 0) return error.OpenFailed;
-        d.cluster_offsets_fd = @as(i32, @intCast(linux.open(&cluster_offsets_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
+        d.cluster_offsets_fd = @as(i32, @intCast(linux.open(&cluster_offsets_path, toO("r"), 0)));
         if (d.cluster_offsets_fd < 0) return error.OpenFailed;
-        d.scales_fd = @as(i32, @intCast(linux.open(&scales_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
+        d.scales_fd = @as(i32, @intCast(linux.open(&scales_path, toO("r"), 0)));
         if (d.scales_fd < 0) return error.OpenFailed;
-        d.offsets_fd = @as(i32, @intCast(linux.open(&offsets_path, @as(linux.O, @bitCast(O_RDONLY_V)), 0)));
+        d.offsets_fd = @as(i32, @intCast(linux.open(&offsets_path, toO("r"), 0)));
         if (d.offsets_fd < 0) return error.OpenFailed;
 
         errdefer _ = linux.close(d.vectors_fd);
