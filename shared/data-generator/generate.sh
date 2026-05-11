@@ -1,17 +1,35 @@
+#!/usr/bin/env bun
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { execSync } from 'child_process'
 
-const DATA_DIR = '../fraud-api/data'
+const SHARED_DATA = './shared/data'
+const DATA_DIR = './fraud-api/data'
 mkdirSync(DATA_DIR, { recursive: true })
 
+console.log("=== Downloading reference files ===")
+const urls = [
+    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/references.json.gz",
+    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/normalization.json",
+    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/mcc_risk.json"
+]
+
+for (const url of urls) {
+    const filename = url.split('/').pop()!
+    execSync(`curl -sL -o ${DATA_DIR}/${filename} ${url}`)
+    console.log(`Downloaded ${filename}`)
+}
+
+console.log("=== Decompressing references ===")
+execSync(`gunzip -f ${DATA_DIR}/references.json.gz`)
+
+const DATA_FILE = `${DATA_DIR}/references.json`
+
+console.log('Reading references.json...')
+const raw = readFileSync(DATA_FILE, 'utf8')
 interface Record {
   vector: number[]
   label: string
 }
-
-const DATA_FILE = '~/dev/rinha-2026/data/references.json'
-
-console.log('Reading references.json...')
-const raw = readFileSync(DATA_FILE, 'utf8')
 const data: Record[] = JSON.parse(raw)
 const N = data.length
 console.log(`Loaded ${N} records`)
@@ -120,7 +138,7 @@ for (let i = 0; i < N; i++) {
     let dist = 0
     for (let d = 0; d < DIMS; d++) {
       const diff = v[d] - centroids[c * DIMS + d]
-      dist += diff * diff
+      dist += diff * dist
     }
     if (dist < bestDist) {
       bestDist = dist
