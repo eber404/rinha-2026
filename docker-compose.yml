@@ -4,6 +4,8 @@ services:
     build:
       context: ./fraud-api
       dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
     volumes:
       - ./fraud-api/vector-index:/app/vector-index:rw
       - ./fraud-api/tests:/app/tests:ro
@@ -30,6 +32,8 @@ services:
     build:
       context: ./load-balancer
       dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
     container_name: load-balancer
     ports:
       - '9999:9999'
