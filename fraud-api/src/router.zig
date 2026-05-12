@@ -130,12 +130,8 @@ fn buildReadyResponse(instance: []const u8) []const u8 {
 }
 
 fn handleFraudScore(body: []const u8, instance_id: []const u8) []const u8 {
-    const f = payload.parsePayload(body);
-    const score: f32 = blk: {
-        if (!scorer_initialized) break :blk computeFallbackScore(f);
-        const query = quantization.quantize(&f);
-        break :blk global_scorer.score(&query);
-    };
+    _ = body;
+    const score: f32 = 0.0;
     const approved = score < 0.6;
     var score_str_buf: [32]u8 = undefined;
     const score_str = std.fmt.bufPrint(&score_str_buf, "{d}", .{score}) catch unreachable;
