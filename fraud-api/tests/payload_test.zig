@@ -57,3 +57,13 @@ test "parse negative numbers" {
     try std.testing.expectEqual(@as(f32, -50.25), f.transaction_amount);
     try std.testing.expectEqual(@as(i32, -2), f.transaction_installments);
 }
+
+test "parse official high-risk payload fields" {
+    const body = "{\"id\":\"tx-3330991687\",\"transaction\":{\"amount\":9505.97,\"installments\":10,\"requested_at\":\"2026-03-14T05:15:12Z\"},\"customer\":{\"avg_amount\":81.28,\"tx_count_24h\":20,\"known_merchants\":[\"MERC-008\",\"MERC-007\",\"MERC-005\"]},\"merchant\":{\"id\":\"MERC-068\",\"mcc\":\"7802\",\"avg_amount\":54.86},\"terminal\":{\"is_online\":false,\"card_present\":true,\"km_from_home\":952.27},\"last_transaction\":null}";
+    const f = payload.parsePayload(body);
+    try std.testing.expectEqual(@as(f32, 9505.97), f.transaction_amount);
+    try std.testing.expectEqual(@as(i32, 10), f.transaction_installments);
+    try std.testing.expectEqual(@as(f32, 81.28), f.customer_avg_amount);
+    try std.testing.expectEqual(@as(i32, 20), f.customer_tx_count_24h);
+    try std.testing.expectEqual(@as(f32, 952.27), f.terminal_km_from_home);
+}

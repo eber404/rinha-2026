@@ -69,22 +69,22 @@ inline fn toO(_: []const u8) linux.O {
     pub fn load(d: *Dataset, data_dir: []const u8) error{OpenFailed}!void {
         var vectors_path: [256:0]u8 = undefined;
         const vectors_path_s = std.fmt.bufPrint(&vectors_path, "{s}/vectors_i8.bin", .{data_dir}) catch return error.OpenFailed;
-        _ = vectors_path_s;
+        vectors_path[vectors_path_s.len] = 0;
         var labels_path: [256:0]u8 = undefined;
         const labels_path_s = std.fmt.bufPrint(&labels_path, "{s}/labels.bin", .{data_dir}) catch return error.OpenFailed;
-        _ = labels_path_s;
+        labels_path[labels_path_s.len] = 0;
         var centroids_path: [256:0]u8 = undefined;
         const centroids_path_s = std.fmt.bufPrint(&centroids_path, "{s}/centroids_i8.bin", .{data_dir}) catch return error.OpenFailed;
-        _ = centroids_path_s;
+        centroids_path[centroids_path_s.len] = 0;
         var cluster_offsets_path: [256:0]u8 = undefined;
         const cluster_offsets_path_s = std.fmt.bufPrint(&cluster_offsets_path, "{s}/cluster_offsets.bin", .{data_dir}) catch return error.OpenFailed;
-        _ = cluster_offsets_path_s;
+        cluster_offsets_path[cluster_offsets_path_s.len] = 0;
         var scales_path: [256:0]u8 = undefined;
         const scales_path_s = std.fmt.bufPrint(&scales_path, "{s}/scales.bin", .{data_dir}) catch return error.OpenFailed;
-        _ = scales_path_s;
+        scales_path[scales_path_s.len] = 0;
         var offsets_path: [256:0]u8 = undefined;
         const offsets_path_s = std.fmt.bufPrint(&offsets_path, "{s}/offsets.bin", .{data_dir}) catch return error.OpenFailed;
-        _ = offsets_path_s;
+        offsets_path[offsets_path_s.len] = 0;
 
         d.vectors_fd = openFile(&vectors_path);
         if (d.vectors_fd < 0) return error.OpenFailed;

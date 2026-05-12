@@ -119,3 +119,9 @@ test "computeFraudScore low risk returns false" {
     const score = router.computeFraudScore(f);
     try std.testing.expect(score < 0.3);
 }
+
+test "route high-risk sample returns approved false" {
+    const body = "{\"id\":\"tx-3330991687\",\"transaction\":{\"amount\":9505.97,\"installments\":10,\"requested_at\":\"2026-03-14T05:15:12Z\"},\"customer\":{\"avg_amount\":81.28,\"tx_count_24h\":20,\"known_merchants\":[\"MERC-008\",\"MERC-007\",\"MERC-005\"]},\"merchant\":{\"id\":\"MERC-068\",\"mcc\":\"7802\",\"avg_amount\":54.86},\"terminal\":{\"is_online\":false,\"card_present\":true,\"km_from_home\":952.27},\"last_transaction\":null}";
+    const rr = router.route("POST", "/fraud-score", body, "1");
+    try std.testing.expect(std.mem.containsAtLeast(u8, rr, 1, "\"approved\":false"));
+}

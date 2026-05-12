@@ -50,6 +50,12 @@ docs/              # plans and notes
 - Official test: `make test-official`
 - Official result output: `artifacts/rinha-official-result.json`
 
+## Incident Notes (2026-05)
+
+- If `/fraud-score` returns `503` while `/ready` is `200`, verify `fraud-api/src/dataset.zig` path buffers are null-terminated after `std.fmt.bufPrint`; missing `\0` can break `linux.open` and keep scorer uninitialized.
+- If HAProxy logs show `be_fraud_api/<NOSRV> ... SC-- 503`, inspect UDS saturation/backlog and backend flapping first.
+- If HAProxy logs show many `sH--` with `~30000ms` on `api1`, treat as backend stall/queue saturation under load, not scoring quality issue.
+
 ## References
 
 Challenge rules: https://github.com/zanfranceschi/rinha-de-backend-2026

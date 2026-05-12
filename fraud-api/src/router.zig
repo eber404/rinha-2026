@@ -7,8 +7,8 @@ const dataset = @import("dataset.zig");
 const static_404 = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
 const static_405 = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 17\r\n\r\nMethod Not Allowed";
 
-var fraud_response_buf: [2048]u8 = undefined;
-var ready_http_buf: [2048]u8 = undefined;
+threadlocal var fraud_response_buf: [2048]u8 = undefined;
+threadlocal var ready_http_buf: [2048]u8 = undefined;
 
 var global_dataset: dataset.Dataset = undefined;
 var global_scorer: scorer.Scorer = undefined;
@@ -148,9 +148,7 @@ fn handleFraudScore(body: []const u8, instance_id: []const u8) []const u8 {
         return "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 15\r\n\r\nService Unavailable";
     }
     const f = payload.parsePayload(body);
-    const query_vec = quantization.quantize(&f);
-    const knn_score = global_scorer.score(&query_vec);
-    const score: f32 = @max(knn_score, computeFraudScore(f));
+    const score: f32 = computeFraudScore(f);
     const approved = score < 0.6;
     var score_str_buf: [32]u8 = undefined;
     const score_str = std.fmt.bufPrint(&score_str_buf, "{d}", .{score}) catch unreachable;

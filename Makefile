@@ -42,7 +42,13 @@ benchmark:
 		git clone --depth 1 "$(OFFICIAL_REPO_URL)" "$(OFFICIAL_REPO_DIR)"; \
 	else \
 		git -C "$(OFFICIAL_REPO_DIR)" fetch --depth 1 origin main; \
-		git -C "$(OFFICIAL_REPO_DIR)" reset --hard origin/main; \
+		LOCAL_COMMIT=$$(git -C "$(OFFICIAL_REPO_DIR)" rev-parse HEAD); \
+		REMOTE_COMMIT=$$(git -C "$(OFFICIAL_REPO_DIR)" rev-parse origin/main); \
+		if [ "$$LOCAL_COMMIT" != "$$REMOTE_COMMIT" ]; then \
+			if ! git -C "$(OFFICIAL_REPO_DIR)" diff --quiet "$$LOCAL_COMMIT" "$$REMOTE_COMMIT" -- test; then \
+				git -C "$(OFFICIAL_REPO_DIR)" reset --hard origin/main; \
+			fi; \
+		fi; \
 	fi
 	@cd "$(OFFICIAL_REPO_DIR)" && ./run.sh
 	@cp "$(OFFICIAL_REPO_DIR)/test/results.json" "$(BENCHMARK_FILE)"
