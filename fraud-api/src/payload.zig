@@ -4,8 +4,11 @@ pub const Features = struct {
     transaction_amount: f32 = 0.0,
     transaction_installments: i32 = 0,
     transaction_hour: u8 = 0,
+    transaction_day_of_week: u8 = 0,
     customer_avg_amount: f32 = 0.0,
     customer_tx_count_24h: i32 = 0,
+    merchant_unknown: bool = true,
+    mcc_risk: f32 = 0.5,
     merchant_mcc: u16 = 0,
     terminal_km_from_home: f32 = 0.0,
     terminal_is_online: bool = false,
@@ -15,6 +18,7 @@ pub const Features = struct {
     last_transaction_km_from_current: f32 = 0.0,
     merchant_avg_amount: f32 = 0.0,
     requested_at_hour: u8 = 0,
+    has_last_transaction: bool = false,
 };
 
 const Context = enum {
@@ -146,11 +150,57 @@ fn parseISODateHour(buf: []const u8, i: *usize) u8 {
     return hour;
 }
 
+fn parseISODateDayOfWeek(s: []const u8) u8 {
+    if (s.len < 10) return 0;
+    const year: i32 = @as(i32, (s[0] - '0')) * 1000 + @as(i32, (s[1] - '0')) * 100 + @as(i32, (s[2] - '0')) * 10 + @as(i32, (s[3] - '0'));
+    const month: i32 = @as(i32, (s[5] - '0')) * 10 + @as(i32, (s[6] - '0'));
+    const day: i32 = @as(i32, (s[8] - '0')) * 10 + @as(i32, (s[9] - '0'));
+
+    var m = month;
+    var y = year;
+    if (m < 3) {
+        m += 12;
+        y -= 1;
+    }
+    const k = @mod(y, 100);
+    const j = @divTrunc(y, 100);
+    const h = @mod(day + @divTrunc(13 * (m + 1), 5) + k + @divTrunc(k, 4) + @divTrunc(j, 4) + 5 * j, 7);
+    const dow_sun0 = @mod(h + 6, 7);
+    return @as(u8, @intCast(if (dow_sun0 == 0) 6 else dow_sun0 - 1));
+}
+
+fn parseISODateAll(buf: []const u8, i: *usize, hour: *u8, dow: *u8) void {
+    skipWhitespace(buf, i);
+    if (i.* >= buf.len or buf[i.*] != '"') return;
+    i.* += 1;
+    const start = i.*;
+    while (i.* < buf.len and buf[i.*] != '"') i.* += 1;
+    const slice = buf[start..i.*];
+    hour.* = 0;
+    if (slice.len >= 13 and slice[11] >= '0' and slice[11] <= '9' and slice[12] >= '0' and slice[12] <= '9') {
+        hour.* = @as(u8, (slice[11] - '0') * 10 + (slice[12] - '0'));
+    }
+    dow.* = parseISODateDayOfWeek(slice);
+    if (i.* < buf.len) i.* += 1;
+}
+
+fn hashId(s: []const u8) u32 {
+    var h: u32 = 2166136261;
+    for (s) |c| {
+        h ^= c;
+        h *%= 16777619;
+    }
+    return h;
+}
+
 pub fn parsePayload(body: []const u8) Features {
     var f = Features{};
     var i: usize = 0;
     var ctx = Context.root;
     var prev_ctx = Context.root;
+    var merchant_id_hash: u32 = 0;
+    var known_hashes: [32]u32 = undefined;
+    var known_count: usize = 0;
 
     while (i < body.len) {
         skipWhitespace(body, &i);
@@ -190,16 +240,36 @@ pub fn parsePayload(body: []const u8) Features {
                 } else if (std.mem.eql(u8, key, "installments")) {
                     f.transaction_installments = parseI32(body, &i);
                 } else if (std.mem.eql(u8, key, "requested_at")) {
-                    f.transaction_hour = parseISODateHour(body, &i);
+                    parseISODateAll(body, &i, &f.transaction_hour, &f.transaction_day_of_week);
                 }
             } else if (ctx == Context.customer) {
                 if (std.mem.eql(u8, key, "avg_amount")) {
                     f.customer_avg_amount = @as(f32, @floatCast(parseNumber(body, &i)));
                 } else if (std.mem.eql(u8, key, "tx_count_24h")) {
                     f.customer_tx_count_24h = parseI32(body, &i);
+                } else if (std.mem.eql(u8, key, "known_merchants")) {
+                    skipWhitespace(body, &i);
+                    if (i < body.len and body[i] == '[') {
+                        i += 1;
+                        while (i < body.len and body[i] != ']') {
+                            skipWhitespace(body, &i);
+                            if (i < body.len and body[i] == '"') {
+                                const s = parseStringValue(body, &i);
+                                if (known_count < known_hashes.len) {
+                                    known_hashes[known_count] = hashId(s);
+                                    known_count += 1;
+                                }
+                            } else {
+                                i += 1;
+                            }
+                        }
+                        if (i < body.len and body[i] == ']') i += 1;
+                    }
                 }
             } else if (ctx == Context.merchant) {
-                if (std.mem.eql(u8, key, "mcc")) {
+                if (std.mem.eql(u8, key, "id")) {
+                    merchant_id_hash = hashId(parseStringValue(body, &i));
+                } else if (std.mem.eql(u8, key, "mcc")) {
                     const mcc_str = parseStringValue(body, &i);
                     f.merchant_mcc = parseMccString(mcc_str);
                 } else if (std.mem.eql(u8, key, "avg_amount")) {
@@ -216,6 +286,7 @@ pub fn parsePayload(body: []const u8) Features {
                     f.terminal_known_merchants = parseI32(body, &i);
                 }
             } else if (ctx == Context.last_transaction) {
+                f.has_last_transaction = true;
                 if (std.mem.eql(u8, key, "minutes")) {
                     f.last_transaction_minutes = parseI32(body, &i);
                 } else if (std.mem.eql(u8, key, "km_from_current")) {
@@ -230,6 +301,17 @@ pub fn parsePayload(body: []const u8) Features {
         } else {
             i += 1;
         }
+    }
+
+    if (merchant_id_hash != 0) {
+        var known = false;
+        for (0..known_count) |k| {
+            if (known_hashes[k] == merchant_id_hash) {
+                known = true;
+                break;
+            }
+        }
+        f.merchant_unknown = !known;
     }
 
     return f;

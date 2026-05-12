@@ -148,7 +148,9 @@ fn handleFraudScore(body: []const u8, instance_id: []const u8) []const u8 {
         return "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 15\r\n\r\nService Unavailable";
     }
     const f = payload.parsePayload(body);
-    const score: f32 = computeFraudScore(f);
+    const query_vec = quantization.quantize(&f);
+    const knn_score = global_scorer.score(&query_vec);
+    const score: f32 = @max(knn_score, computeFraudScore(f));
     const approved = score < 0.6;
     var score_str_buf: [32]u8 = undefined;
     const score_str = std.fmt.bufPrint(&score_str_buf, "{d}", .{score}) catch unreachable;
