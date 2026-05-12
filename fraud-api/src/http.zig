@@ -56,19 +56,29 @@ fn parseHeaders(buf: []const u8) ?usize {
 }
 
 fn findContentLength(buf: []const u8) ?usize {
-    const target = "Content-Length: ";
     var i: usize = 0;
-    while (i + target.len < buf.len) {
-        var match = true;
-        for (0..target.len) |j| {
-            if (buf[i + j] != target[j]) {
-                match = false;
-                break;
-            }
-        }
-        if (match) {
+    while (i + 16 < buf.len) {
+        const is_content_length =
+            (buf[i] | 0x20) == 'c' and
+            (buf[i + 1] | 0x20) == 'o' and
+            (buf[i + 2] | 0x20) == 'n' and
+            (buf[i + 3] | 0x20) == 't' and
+            (buf[i + 4] | 0x20) == 'e' and
+            (buf[i + 5] | 0x20) == 'n' and
+            (buf[i + 6] | 0x20) == 't' and
+            buf[i + 7] == '-' and
+            (buf[i + 8] | 0x20) == 'l' and
+            (buf[i + 9] | 0x20) == 'e' and
+            (buf[i + 10] | 0x20) == 'n' and
+            (buf[i + 11] | 0x20) == 'g' and
+            (buf[i + 12] | 0x20) == 't' and
+            (buf[i + 13] | 0x20) == 'h' and
+            buf[i + 14] == ':';
+
+        if (is_content_length) {
+            var pos = i + 15;
+            while (pos < buf.len and buf[pos] == ' ') pos += 1;
             var val: usize = 0;
-            var pos = i + target.len;
             while (pos < buf.len and buf[pos] >= '0' and buf[pos] <= '9') {
                 val = val * 10 + @as(usize, buf[pos] - '0');
                 pos += 1;

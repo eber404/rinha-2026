@@ -21,6 +21,12 @@ test "find content length" {
     try std.testing.expect(len == 1234);
 }
 
+test "find content length lowercase header" {
+    const buf = "POST /fraud-score HTTP/1.1\r\ncontent-length: 321\r\n\r\n";
+    const len = http.findContentLength(buf);
+    try std.testing.expect(len == 321);
+}
+
 test "find content length zero" {
     const buf = "GET / HTTP/1.1\r\n\r\n";
     const len = http.findContentLength(buf);
