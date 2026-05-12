@@ -35,10 +35,6 @@ pub fn main() void {
             continue;
         }
 
-        if (std.Thread.spawn(.{}, handleClient, .{ client_fd, instance_id })) |thread| {
-            thread.detach();
-        } else |_| {
-            _ = std.os.linux.close(client_fd);
-        }
+        handleClient(client_fd, instance_id);
     }
 }
