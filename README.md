@@ -37,12 +37,13 @@ docs/            # plans and notes
 docker-compose up --build
 
 # Run official Rinha test
-make test-official
+make benchmark
 ```
 
 ## Official test
 
-`make test-official` does:
+`make benchmark` does:
+
 1. Clones (or updates) `zanfranceschi/rinha-de-backend-2026` into `.cache/rinha-official`
 2. Runs `./run.sh` in the official repository
 3. Copies `test/results.json` to `artifacts/rinha-official-result.json`

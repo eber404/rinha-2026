@@ -47,7 +47,7 @@ docs/              # plans and notes
 - Health endpoint: `GET /ready`
 - Scoring endpoint: `POST /fraud-score`
 - Docker dev: `docker-compose up --build`
-- Official test: `make test-official`
+- Official test: `make benchmark`
 - Official result output: `artifacts/rinha-official-result.json`
 
 ## Incident Notes (2026-05)
