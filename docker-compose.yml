@@ -4,8 +4,6 @@ services:
     build:
       context: ./fraud-api
       dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
     volumes:
       - ./fraud-api/vector-index:/app/vector-index:rw
       - ./fraud-api/tests:/app/tests:ro
@@ -16,6 +14,7 @@ services:
     environment:
       - INSTANCE_ID=1
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
+      - ZIG_CACHE_DIR=/tmp/zig-cache
     deploy:
       resources:
         limits:
@@ -32,8 +31,6 @@ services:
     build:
       context: ./load-balancer
       dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
     container_name: load-balancer
     ports:
       - '9999:9999'
@@ -42,6 +39,7 @@ services:
       - rinha-sockets:/tmp/rinha
     environment:
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
+      - ZIG_CACHE_DIR=/tmp/zig-cache
     networks:
       - rinha-net
     restart: always

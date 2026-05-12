@@ -43,8 +43,8 @@ pub const Dataset = struct {
         return Dataset{};
     }
 
-    inline fn toO(_: []const u8) linux.O {
-        return @bitCast(@as(u32, 0));
+inline fn toO(_: []const u8) linux.O {
+        return linux.O{};
     }
 
     inline fn toOLinux(v: u32) linux.O {
@@ -58,6 +58,12 @@ pub const Dataset = struct {
         const addr = linux.mmap(null, file_size, prot, flags, fd, 0);
         if (@as(isize, @intCast(addr)) < 0) return null;
         return @as([*]align(PAGE_SIZE) const u8, @ptrFromInt(addr))[0..file_size];
+    }
+
+    fn openFile(path: [*:0]u8) i32 {
+        const fd = linux.open(path, toO("r"), 0);
+        const isize_fd = @as(isize, @bitCast(fd));
+        return @as(i32, @intCast(isize_fd));
     }
 
     pub fn load(d: *Dataset, data_dir: []const u8) error{OpenFailed}!void {
@@ -80,17 +86,17 @@ pub const Dataset = struct {
         const offsets_path_s = std.fmt.bufPrint(&offsets_path, "{s}/offsets.bin", .{data_dir}) catch return error.OpenFailed;
         _ = offsets_path_s;
 
-        d.vectors_fd = @as(i32, @intCast(linux.open(&vectors_path, toO("r"), 0)));
+        d.vectors_fd = openFile(&vectors_path);
         if (d.vectors_fd < 0) return error.OpenFailed;
-        d.labels_fd = @as(i32, @intCast(linux.open(&labels_path, toO("r"), 0)));
+        d.labels_fd = openFile(&labels_path);
         if (d.labels_fd < 0) return error.OpenFailed;
-        d.centroids_fd = @as(i32, @intCast(linux.open(&centroids_path, toO("r"), 0)));
+        d.centroids_fd = openFile(&centroids_path);
         if (d.centroids_fd < 0) return error.OpenFailed;
-        d.cluster_offsets_fd = @as(i32, @intCast(linux.open(&cluster_offsets_path, toO("r"), 0)));
+        d.cluster_offsets_fd = openFile(&cluster_offsets_path);
         if (d.cluster_offsets_fd < 0) return error.OpenFailed;
-        d.scales_fd = @as(i32, @intCast(linux.open(&scales_path, toO("r"), 0)));
+        d.scales_fd = openFile(&scales_path);
         if (d.scales_fd < 0) return error.OpenFailed;
-        d.offsets_fd = @as(i32, @intCast(linux.open(&offsets_path, toO("r"), 0)));
+        d.offsets_fd = openFile(&offsets_path);
         if (d.offsets_fd < 0) return error.OpenFailed;
 
         errdefer _ = linux.close(d.vectors_fd);

@@ -23,9 +23,9 @@ preprocess:
 
 test:
 	@echo "Testing load-balancer..."
-	$(DOCKER_RUN) load-balancer zig test tests/*_test.zig
+	$(DOCKER_RUN) load-balancer zig test --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-global-cache tests/main_test.zig
 	@echo "Testing fraud-api..."
-	$(DOCKER_RUN) fraud-api-1 zig test tests/*_test.zig
+	$(DOCKER_RUN) fraud-api-1 zig test --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-global-cache tests/main_test.zig
 
 clean:
 	@echo "Cleaning artifacts..."
