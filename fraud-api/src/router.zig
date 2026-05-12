@@ -115,40 +115,13 @@ fn buildReadyResponse(instance: []const u8) []const u8 {
     return ready_http_buf[0..pos];
 }
 
-fn computeFraudScore(f: payload.Features) f32 {
-    var score: f32 = 0.0;
-
-    if (f.transaction_amount > f.customer_avg_amount * 3.0) {
-        score += 0.3;
-    }
-    if (f.transaction_installments > 6) {
-        score += 0.15;
-    }
-    if (f.customer_tx_count_24h < 3) {
-        score += 0.2;
-    }
-    if (f.terminal_km_from_home > 100.0) {
-        score += 0.25;
-    }
-    if (f.last_transaction_minutes > 0 and f.last_transaction_minutes < 5) {
-        score += 0.3;
-    }
-    if (!f.terminal_is_online and !f.terminal_card_present) {
-        score += 0.15;
-    }
-    if (f.merchant_mcc == 5411 and f.transaction_amount > 1000) {
-        score += 0.2;
-    }
-
-    return @min(score, 1.0);
-}
-
 fn handleFraudScore(body: []const u8, instance_id: []const u8) []const u8 {
     if (!scorer_initialized) {
         return "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 15\r\n\r\nService Unavailable";
     }
     const f = payload.parsePayload(body);
-    const score: f32 = computeFraudScore(f);
+    const query = quantization.quantize(&f);
+    const score: f32 = global_scorer.score(&query);
     const approved = score < 0.6;
     var score_str_buf: [32]u8 = undefined;
     const score_str = std.fmt.bufPrint(&score_str_buf, "{d}", .{score}) catch unreachable;
