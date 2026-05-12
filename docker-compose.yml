@@ -32,7 +32,7 @@ services:
   haproxy:
     image: haproxy:lts-alpine
     container_name: haproxy
-    user: "0:0"
+    user: '0:0'
     ports:
       - '9999:9999'
     depends_on:
