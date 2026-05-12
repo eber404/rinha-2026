@@ -47,6 +47,14 @@ const TopK = struct {
         @memset(&t.distances, 0);
         @memset(&t.indices, 0);
     }
+
+    fn contains(t: *const TopK, idx: u32) bool {
+        var i: u32 = 0;
+        while (i < t.count) : (i += 1) {
+            if (t.indices[i] == idx) return true;
+        }
+        return false;
+    }
 };
 
 fn distance(q: *const QueryVector, v: []const i8) i32 {
@@ -148,6 +156,25 @@ pub const Scorer = struct {
                 const dist = distance(query, &v);
                 const global_idx = start + j;
                 top_k.insert(dist, global_idx);
+            }
+        }
+
+        if (top_k.count < K) {
+            const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
+            var idx: u32 = 0;
+            while (idx < max_vec_idx) : (idx += 1) {
+                var v: [16]i8 = undefined;
+                const vec_offset = @as(u64, idx) * 16;
+                if (vec_offset + 16 > s.dataset.vectors_mmap.len) break;
+
+                for (0..16) |dim| {
+                    v[dim] = @as(i8, @bitCast(s.dataset.vectors_mmap[vec_offset + dim]));
+                }
+
+                if (top_k.contains(idx)) continue;
+
+                const dist = distance(query, &v);
+                top_k.insert(dist, idx);
             }
         }
 
