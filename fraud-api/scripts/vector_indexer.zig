@@ -51,36 +51,11 @@ pub fn main() !void {
     const n = records.len;
     if (n == 0) return;
 
-    var means = try allocator.alloc(f32, DIMS);
-    var stds = try allocator.alloc(f32, DIMS);
     var labels = try allocator.alloc(u8, n);
 
-    @memset(means, 0.0);
-    @memset(stds, 0.0);
-
     for (records, 0..) |rec, i| {
-        const vec = rec.object.get("vector").?.array;
-        for (0..DIMS) |d| {
-            means[d] += valueToF32(vec[d]);
-        }
         const label = rec.object.get("label").?.string;
         labels[i] = if (std.mem.eql(u8, label, "fraud")) 1 else 0;
-    }
-
-    const n_f: f32 = @floatFromInt(n);
-    for (0..DIMS) |d| means[d] /= n_f;
-
-    for (records) |rec| {
-        const vec = rec.object.get("vector").?.array;
-        for (0..DIMS) |d| {
-            const diff = valueToF32(vec[d]) - means[d];
-            stds[d] += diff * diff;
-        }
-    }
-
-    for (0..DIMS) |d| {
-        stds[d] = @sqrt(stds[d] / n_f);
-        if (stds[d] < 1e-6) stds[d] = 1.0;
     }
 
     var vectors_tmp = try allocator.alloc(u8, n * PADDED_DIMS);
@@ -90,8 +65,7 @@ pub fn main() !void {
         const vec = rec.object.get("vector").?.array;
         const base = i * PADDED_DIMS;
         for (0..DIMS) |d| {
-            const normalized = (valueToF32(vec[d]) - means[d]) / stds[d];
-            vectors_tmp[base + d] = quantizeSignedToByte(normalized);
+            vectors_tmp[base + d] = quantizeSignedToByte(valueToF32(vec[d]));
         }
     }
 
@@ -130,8 +104,7 @@ pub fn main() !void {
         const centroid_base = c * DIMS;
         const out_base = c * PADDED_DIMS;
         for (0..DIMS) |d| {
-            const normalized = (centroids_f32[centroid_base + d] - means[d]) / stds[d];
-            centroids_i8[out_base + d] = quantizeSignedToByte(normalized);
+            centroids_i8[out_base + d] = quantizeSignedToByte(centroids_f32[centroid_base + d]);
         }
     }
 
@@ -209,8 +182,8 @@ pub fn main() !void {
     var scales_bin = try allocator.alloc(u8, DIMS * 4);
     var offsets_bin = try allocator.alloc(u8, DIMS * 4);
     for (0..DIMS) |d| {
-        const sbits: u32 = @bitCast(stds[d]);
-        const obits: u32 = @bitCast(means[d]);
+        const sbits: u32 = @bitCast(@as(f32, 1.0));
+        const obits: u32 = @bitCast(@as(f32, 0.0));
         writeU32Le(scales_bin[d * 4 .. d * 4 + 4], sbits);
         writeU32Le(offsets_bin[d * 4 .. d * 4 + 4], obits);
     }
