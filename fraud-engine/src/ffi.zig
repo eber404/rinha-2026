@@ -29,6 +29,13 @@ pub const ScoreRes = extern struct {
     err_code: u8,
 };
 
+pub const CoreStats = extern struct {
+    requests: u64,
+    fallback_hits: u64,
+    fallback_scanned_vectors: u64,
+    cluster_scanned_vectors: u64,
+};
+
 var global_dataset: dataset.Dataset = undefined;
 var global_scorer: scorer.Scorer = undefined;
 var initialized = false;
@@ -82,4 +89,13 @@ pub export fn score_shutdown() callconv(.c) void {
     if (!initialized) return;
     global_dataset.deinit();
     initialized = false;
+}
+
+pub export fn score_stats(out: *CoreStats) callconv(.c) void {
+    out.* = .{
+        .requests = scorer.runtime_stats.requests.load(.monotonic),
+        .fallback_hits = scorer.runtime_stats.fallback_hits.load(.monotonic),
+        .fallback_scanned_vectors = scorer.runtime_stats.fallback_scanned_vectors.load(.monotonic),
+        .cluster_scanned_vectors = scorer.runtime_stats.cluster_scanned_vectors.load(.monotonic),
+    };
 }

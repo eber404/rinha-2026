@@ -2,10 +2,20 @@ const std = @import("std");
 const quantization = @import("quantization.zig");
 const dataset = @import("dataset.zig");
 
+pub const RuntimeStats = struct {
+    requests: std.atomic.Value(u64) = .init(0),
+    fallback_hits: std.atomic.Value(u64) = .init(0),
+    fallback_scanned_vectors: std.atomic.Value(u64) = .init(0),
+    cluster_scanned_vectors: std.atomic.Value(u64) = .init(0),
+};
+
+pub var runtime_stats: RuntimeStats = .{};
+
 pub const QueryVector = quantization.QueryVector;
 pub const VECTOR_DIM = 16;
 pub const K: u32 = 5;
 pub const NPROBE: u32 = 8;
+pub const TOTAL_SCAN_BUDGET: u32 = 28_000;
 
 const TopK = struct {
     distances: [K]i32,
@@ -119,6 +129,7 @@ pub const Scorer = struct {
     }
 
     pub fn score(s: *const Scorer, query: *const QueryVector) f32 {
+        _ = runtime_stats.requests.fetchAdd(1, .monotonic);
         if (s.n_clusters == 0 or s.dataset.vectors_mmap.len == 0) {
             return 0.0;
         }
@@ -127,7 +138,9 @@ pub const Scorer = struct {
 
         var top_k = TopK.init();
 
+        var remaining_budget: u32 = TOTAL_SCAN_BUDGET;
         for (0..NPROBE) |i| {
+            if (remaining_budget == 0) break;
             const cluster_id = cluster_indices[i];
             if (cluster_id >= s.n_clusters) continue;
 
@@ -137,14 +150,24 @@ pub const Scorer = struct {
             const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
             const start = range.start;
             const end = @min(range.end, max_vec_idx);
+            if (end <= start) continue;
+
+            const probes_left = @as(u32, @intCast(NPROBE - i));
+            const per_cluster_budget = @max(@divTrunc(remaining_budget, probes_left), 1);
+            const cluster_len = end - start;
+            const scan_len = @min(cluster_len, per_cluster_budget);
+            const scan_end = start + scan_len;
+
+            _ = runtime_stats.cluster_scanned_vectors.fetchAdd(@as(u64, scan_len), .monotonic);
+            remaining_budget -|= scan_len;
 
             const vec_start = @as(u64, start) * 16;
-            const vec_end = @as(u64, end) * 16;
+            const vec_end = @as(u64, scan_end) * 16;
             if (vec_end > s.dataset.vectors_mmap.len) continue;
 
             const vec_slice = s.dataset.vectors_mmap[vec_start..vec_end];
             var j: u32 = 0;
-            while (j < end - start) : (j += 1) {
+            while (j < scan_len) : (j += 1) {
                 const vec_offset = @as(u64, j) * 16;
                 if (vec_offset + 16 > vec_slice.len) break;
 
@@ -160,7 +183,9 @@ pub const Scorer = struct {
         }
 
         if (top_k.count < K) {
+            _ = runtime_stats.fallback_hits.fetchAdd(1, .monotonic);
             const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
+            _ = runtime_stats.fallback_scanned_vectors.fetchAdd(@as(u64, max_vec_idx), .monotonic);
             var idx: u32 = 0;
             while (idx < max_vec_idx) : (idx += 1) {
                 var v: [16]i8 = undefined;

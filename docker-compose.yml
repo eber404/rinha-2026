@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: server/Dockerfile
     volumes:
-      - ./fraud-api/vector-index:/app/vector-index:rw
+      - ./fraud-engine/vector-index:/app/fraud-engine/vector-index:rw
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net

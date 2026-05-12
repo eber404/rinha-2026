@@ -5,7 +5,7 @@ Monorepo for Rinha de Backend 2026.
 ## Stack
 
 - **Load Balancer**: Zig (`load-balancer/src/main.zig`)
-- **API**: Zig (`fraud-api/src/*.zig`)
+- **API**: Go (`server/cmd/server`) + Zig core (`fraud-engine/src/*.zig`)
 - **Preprocessing**: Zig, runs at container build time
 
 ## Structure
@@ -14,7 +14,8 @@ Monorepo for Rinha de Backend 2026.
 load-balancer/   # Zig LB (TCP:9999 -> UDS)
                  # - src/main.zig
                  # - nginx.conf
-fraud-api/       # Zig API (HTTP + payload + scorer)
+server/          # Go API (HTTP/UDS + partial parser + cgo bridge)
+fraud-engine/    # Zig core scorer + preprocessing/index generation
                  # - src/*.zig
                  # - vector-index/ (binary index files)
                  # - scripts/pre-processing.sh

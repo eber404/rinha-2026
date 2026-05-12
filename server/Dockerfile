@@ -8,10 +8,6 @@ RUN curl -L -o /tmp/zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-li
 
 WORKDIR /workspace
 COPY fraud-engine/src/ ./fraud-engine/src/
-COPY fraud-api/src/dataset.zig ./fraud-engine/src/dataset.zig
-COPY fraud-api/src/scorer.zig ./fraud-engine/src/scorer.zig
-COPY fraud-api/src/quantization.zig ./fraud-engine/src/quantization.zig
-COPY fraud-api/src/payload.zig ./fraud-engine/src/payload.zig
 RUN zig build-lib fraud-engine/src/ffi.zig -target aarch64-linux-musl -O ReleaseFast -femit-bin=/workspace/libzigscore.a
 
 FROM golang:1.22-alpine AS go-builder

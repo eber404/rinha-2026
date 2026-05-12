@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-DATA_DIR="$ROOT_DIR/vector-index"
+DATA_DIR="$ROOT_DIR/fraud-engine/vector-index"
 
 mkdir -p "$DATA_DIR"
 

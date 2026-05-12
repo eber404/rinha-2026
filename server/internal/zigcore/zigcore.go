@@ -35,6 +35,13 @@ extern uint32_t score_abi_version(void);
 extern uint8_t score_init(const char* data_dir);
 extern uint8_t score_eval(const ScoreReq* req, ScoreRes* res);
 extern void score_shutdown(void);
+typedef struct {
+  uint64_t requests;
+  uint64_t fallback_hits;
+  uint64_t fallback_scanned_vectors;
+  uint64_t cluster_scanned_vectors;
+} CoreStats;
+extern void score_stats(CoreStats* out);
 */
 import "C"
 import (
@@ -67,6 +74,13 @@ type Req struct {
 	MerchantAvgAmount        float32
 	RequestedAtHour          uint8
 	HasLastTransaction       uint8
+}
+
+type Stats struct {
+	Requests               uint64
+	FallbackHits           uint64
+	FallbackScannedVectors uint64
+	ClusterScannedVectors  uint64
 }
 
 func Init(dataDir string) error {
@@ -111,4 +125,15 @@ func Eval(in Req) (float32, error) {
 
 func Shutdown() {
 	C.score_shutdown()
+}
+
+func SnapshotStats() Stats {
+	var cs C.CoreStats
+	C.score_stats(&cs)
+	return Stats{
+		Requests:               uint64(cs.requests),
+		FallbackHits:           uint64(cs.fallback_hits),
+		FallbackScannedVectors: uint64(cs.fallback_scanned_vectors),
+		ClusterScannedVectors:  uint64(cs.cluster_scanned_vectors),
+	}
 }

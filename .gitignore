@@ -29,12 +29,13 @@ coverage/
 .cache/
 
 # Generated data
-vector-index/*.bin
-vector-index/refs.bin
-vector-index/references.json
+fraud-engine/vector-index/*.bin
+fraud-engine/vector-index/refs.bin
+fraud-engine/vector-index/references.json
+fraud-engine/vector-index/normalization.json
+fraud-engine/vector-index/mcc_risk.json
 shared/vector-index/
 shared/sockets/
-fraud-api/vector-index/
 
 # Test artifacts
 artifacts/rinha-official-result.json

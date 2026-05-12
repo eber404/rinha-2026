@@ -28,15 +28,16 @@ fn writeU32Le(buf: []u8, value: u32) void {
     buf[3] = @as(u8, @intCast((value >> 24) & 0xff));
 }
 
-pub fn main() !void {
-    const data_dir = "./vector-index";
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const data_dir = "./fraud-engine/vector-index";
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     const path = try std.fmt.allocPrint(allocator, "{s}/references.json", .{data_dir});
-    const content = std.fs.cwd().readFileAlloc(allocator, path, 1_000_000_000) catch |err| {
+    const content = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1_000_000_000)) catch |err| {
         std.debug.print("read references failed: {}\n", .{err});
         return err;
     };
@@ -62,7 +63,7 @@ pub fn main() !void {
     @memset(vectors_tmp, 0);
 
     for (records, 0..) |rec, i| {
-        const vec = rec.object.get("vector").?.array;
+        const vec = rec.object.get("vector").?.array.items;
         const base = i * PADDED_DIMS;
         for (0..DIMS) |d| {
             vectors_tmp[base + d] = quantizeSignedToByte(valueToF32(vec[d]));
@@ -75,14 +76,14 @@ pub fn main() !void {
     @memset(centroid_counts, 0);
 
     const sample_size = @min(n, 50_000);
-    var seed: u32 = @intCast(std.time.timestamp());
+    var seed: u32 = 0x12345678;
     for (0..sample_size) |i| {
         seed = seed * 1664525 + 1013904223;
         const idx = @as(usize, seed) % n;
         const c = i % NUM_CLUSTERS;
         centroid_counts[c] += 1;
 
-        const vec = records[idx].object.get("vector").?.array;
+        const vec = records[idx].object.get("vector").?.array.items;
         const centroid_base = c * DIMS;
         for (0..DIMS) |d| {
             centroids_f32[centroid_base + d] += valueToF32(vec[d]);
@@ -161,13 +162,13 @@ pub fn main() !void {
     }
 
     const vectors_path = try std.fmt.allocPrint(allocator, "{s}/vectors_i8.bin", .{data_dir});
-    try std.fs.cwd().writeFile(vectors_path, vectors_out);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = vectors_path, .data = vectors_out });
 
     const labels_path = try std.fmt.allocPrint(allocator, "{s}/labels.bin", .{data_dir});
-    try std.fs.cwd().writeFile(labels_path, labels_out);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = labels_path, .data = labels_out });
 
     const centroids_path = try std.fmt.allocPrint(allocator, "{s}/centroids_i8.bin", .{data_dir});
-    try std.fs.cwd().writeFile(centroids_path, centroids_i8);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = centroids_path, .data = centroids_i8 });
 
     var cluster_offsets_bin = try allocator.alloc(u8, NUM_CLUSTERS * 8);
     for (0..NUM_CLUSTERS) |c| {
@@ -177,7 +178,7 @@ pub fn main() !void {
     }
 
     const cluster_offsets_path = try std.fmt.allocPrint(allocator, "{s}/cluster_offsets.bin", .{data_dir});
-    try std.fs.cwd().writeFile(cluster_offsets_path, cluster_offsets_bin);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cluster_offsets_path, .data = cluster_offsets_bin });
 
     var scales_bin = try allocator.alloc(u8, DIMS * 4);
     var offsets_bin = try allocator.alloc(u8, DIMS * 4);
@@ -189,10 +190,10 @@ pub fn main() !void {
     }
 
     const scales_path = try std.fmt.allocPrint(allocator, "{s}/scales.bin", .{data_dir});
-    try std.fs.cwd().writeFile(scales_path, scales_bin);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = scales_path, .data = scales_bin });
 
     const offsets_path = try std.fmt.allocPrint(allocator, "{s}/offsets.bin", .{data_dir});
-    try std.fs.cwd().writeFile(offsets_path, offsets_bin);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = offsets_path, .data = offsets_bin });
 
     std.debug.print("index generated: n={d}, clusters={d}\n", .{ n, NUM_CLUSTERS });
 }

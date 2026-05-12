@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"server/internal/payload"
@@ -17,6 +18,23 @@ import (
 type app struct {
 	instanceID string
 	ready      bool
+	metrics    *metrics
+}
+
+type metrics struct {
+	requestsTotal      atomic.Int64
+	readyRequests      atomic.Int64
+	status200          atomic.Int64
+	status400          atomic.Int64
+	status405          atomic.Int64
+	status503          atomic.Int64
+	parseErrors        atomic.Int64
+	evalErrors         atomic.Int64
+	readErrors         atomic.Int64
+	latencyTotalNs     atomic.Int64
+	parseTotalNs       atomic.Int64
+	evalTotalNs        atomic.Int64
+	errorSamplesLogged atomic.Int64
 }
 
 func main() {
@@ -25,13 +43,14 @@ func main() {
 		instanceID = "1"
 	}
 
-	a := &app{instanceID: instanceID}
-	if err := zigcore.Init("/app/vector-index"); err != nil {
+	a := &app{instanceID: instanceID, metrics: &metrics{}}
+	if err := zigcore.Init("/app/fraud-engine/vector-index"); err != nil {
 		log.Printf("zig init failed: %v", err)
 	} else {
 		a.ready = true
 	}
 	defer zigcore.Shutdown()
+	go a.reportMetrics()
 
 	socketPath := fmt.Sprintf("/tmp/rinha/api-%s.sock", instanceID)
 	_ = os.Remove(socketPath)
@@ -62,39 +81,56 @@ func main() {
 }
 
 func (a *app) handleReady(w http.ResponseWriter, r *http.Request) {
+	a.metrics.readyRequests.Add(1)
 	if r.Method != http.MethodGet {
+		a.metrics.status405.Add(1)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	if !a.ready {
+		a.metrics.status503.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"ready":false}`))
 		return
 	}
+	a.metrics.status200.Add(1)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ready":true,"instance":"` + a.instanceID + `"}`))
 }
 
 func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	a.metrics.requestsTotal.Add(1)
 	if r.Method != http.MethodPost {
+		a.metrics.status405.Add(1)
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	if !a.ready {
+		a.metrics.status503.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
+	parseStart := time.Now()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
 	if err != nil {
+		a.metrics.readErrors.Add(1)
+		a.metrics.status400.Add(1)
 		w.WriteHeader(http.StatusBadRequest)
+		a.sampleErrorLog("read_body", err, nil)
 		return
 	}
 	f, err := payload.Parse(body)
+	a.metrics.parseTotalNs.Add(time.Since(parseStart).Nanoseconds())
 	if err != nil {
+		a.metrics.parseErrors.Add(1)
+		a.metrics.status400.Add(1)
 		w.WriteHeader(http.StatusBadRequest)
+		a.sampleErrorLog("parse_payload", err, body)
 		return
 	}
 
+	evalStart := time.Now()
 	score, err := zigcore.Eval(zigcore.Req{
 		TransactionAmount:        f.TransactionAmount,
 		TransactionInstallments:  f.TransactionInstallments,
@@ -115,8 +151,12 @@ func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
 		RequestedAtHour:          f.RequestedAtHour,
 		HasLastTransaction:       boolToU8(f.HasLastTransaction),
 	})
+	a.metrics.evalTotalNs.Add(time.Since(evalStart).Nanoseconds())
 	if err != nil {
+		a.metrics.evalErrors.Add(1)
+		a.metrics.status503.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
+		a.sampleErrorLog("zig_eval", err, nil)
 		return
 	}
 
@@ -125,6 +165,91 @@ func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res)))
 	_, _ = w.Write(res)
+	a.metrics.status200.Add(1)
+	a.metrics.latencyTotalNs.Add(time.Since(started).Nanoseconds())
+}
+
+func (a *app) sampleErrorLog(kind string, err error, body []byte) {
+	if a.metrics.errorSamplesLogged.Load() >= 50 {
+		return
+	}
+	idx := a.metrics.errorSamplesLogged.Add(1)
+	if idx > 50 {
+		return
+	}
+	if len(body) > 280 {
+		body = body[:280]
+	}
+	log.Printf("instance=%s err_kind=%s err=%v body=%q", a.instanceID, kind, err, body)
+}
+
+func (a *app) reportMetrics() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var prevReq int64
+	var prev200 int64
+	var prev400 int64
+	var prev405 int64
+	var prev503 int64
+	var prevParseErr int64
+	var prevEvalErr int64
+	var prevReadErr int64
+	var prevZigReq uint64
+	var prevZigFallback uint64
+	var prevZigFallbackScanned uint64
+	var prevZigClusterScanned uint64
+
+	for range ticker.C {
+		req := a.metrics.requestsTotal.Load()
+		s200 := a.metrics.status200.Load()
+		s400 := a.metrics.status400.Load()
+		s405 := a.metrics.status405.Load()
+		s503 := a.metrics.status503.Load()
+		parseErr := a.metrics.parseErrors.Load()
+		evalErr := a.metrics.evalErrors.Load()
+		readErr := a.metrics.readErrors.Load()
+
+		dReq := req - prevReq
+		d200 := s200 - prev200
+		d400 := s400 - prev400
+		d405 := s405 - prev405
+		d503 := s503 - prev503
+		dParseErr := parseErr - prevParseErr
+		dEvalErr := evalErr - prevEvalErr
+		dReadErr := readErr - prevReadErr
+
+		prevReq, prev200, prev400, prev405, prev503 = req, s200, s400, s405, s503
+		prevParseErr, prevEvalErr, prevReadErr = parseErr, evalErr, readErr
+
+		latAvgMs := avgMs(a.metrics.latencyTotalNs.Load(), s200)
+		parseAvgMs := avgMs(a.metrics.parseTotalNs.Load(), req)
+		evalAvgMs := avgMs(a.metrics.evalTotalNs.Load(), req-parseErr-readErr)
+
+		z := zigcore.SnapshotStats()
+		dZigReq := z.Requests - prevZigReq
+		dZigFallback := z.FallbackHits - prevZigFallback
+		dZigFallbackScanned := z.FallbackScannedVectors - prevZigFallbackScanned
+		dZigClusterScanned := z.ClusterScannedVectors - prevZigClusterScanned
+		prevZigReq = z.Requests
+		prevZigFallback = z.FallbackHits
+		prevZigFallbackScanned = z.FallbackScannedVectors
+		prevZigClusterScanned = z.ClusterScannedVectors
+
+		fallbackRate := 0.0
+		if dZigReq > 0 {
+			fallbackRate = float64(dZigFallback) / float64(dZigReq)
+		}
+
+		log.Printf("instance=%s metrics window=5s req=%d ok200=%d bad400=%d m405=%d svc503=%d parse_err=%d eval_err=%d read_err=%d avg_ms_total=%.3f avg_ms_parse=%.3f avg_ms_eval=%.3f zig_req=%d zig_fallback=%d zig_fallback_rate=%.3f zig_cluster_scan=%d zig_fallback_scan=%d", a.instanceID, dReq, d200, d400, d405, d503, dParseErr, dEvalErr, dReadErr, latAvgMs, parseAvgMs, evalAvgMs, dZigReq, dZigFallback, fallbackRate, dZigClusterScanned, dZigFallbackScanned)
+	}
+}
+
+func avgMs(totalNs int64, n int64) float64 {
+	if n <= 0 {
+		return 0
+	}
+	return float64(totalNs) / float64(n) / 1_000_000
 }
 
 func boolToU8(v bool) uint8 {
