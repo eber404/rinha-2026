@@ -1,143 +1,225 @@
 const std = @import("std");
 const json = std.json;
 
-const DIMS: u32 = 14;
-const NUM_CLUSTERS: u32 = 256;
+const DIMS: usize = 14;
+const PADDED_DIMS: usize = 16;
+const NUM_CLUSTERS: usize = 256;
 
-const Record = struct {
-    vector: [DIMS]f32,
-    label: []const u8,
-};
+fn valueToF32(v: json.Value) f32 {
+    return switch (v) {
+        .float => |x| @as(f32, @floatCast(x)),
+        .integer => |x| @as(f32, @floatFromInt(x)),
+        else => 0.0,
+    };
+}
 
-pub fn main() void {
-    const data_dir = "./data";
+fn quantizeSignedToByte(v: f32) u8 {
+    var q: i32 = @intFromFloat(@round(v * 127.0));
+    if (q > 127) q = 127;
+    if (q < -128) q = -128;
+    const signed: i8 = @intCast(q);
+    return @bitCast(signed);
+}
+
+fn writeU32Le(buf: []u8, value: u32) void {
+    buf[0] = @as(u8, @intCast(value & 0xff));
+    buf[1] = @as(u8, @intCast((value >> 8) & 0xff));
+    buf[2] = @as(u8, @intCast((value >> 16) & 0xff));
+    buf[3] = @as(u8, @intCast((value >> 24) & 0xff));
+}
+
+pub fn main() !void {
+    const data_dir = "./vector-index";
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    std.debug.print("=== Reading references.json...\n", .{});
-    const path = std.fmt.allocPrintZ(allocator, "{s}/references.json", .{data_dir}) catch return;
+    const path = try std.fmt.allocPrint(allocator, "{s}/references.json", .{data_dir});
     const content = std.fs.cwd().readFileAlloc(allocator, path, 1_000_000_000) catch |err| {
-        std.debug.print("Failed to read file: {}\n", .{err});
-        return;
+        std.debug.print("read references failed: {}\n", .{err});
+        return err;
     };
 
     const parsed = json.parseFromSlice([]json.Value, allocator, content, .{}) catch |err| {
-        std.debug.print("Failed to parse JSON: {}\n", .{err});
-        return;
+        std.debug.print("parse references failed: {}\n", .{err});
+        return err;
     };
     defer parsed.deinit();
 
     const records = parsed.value;
-    const N: u32 = @intCast(records.len);
-    std.debug.print("Loaded {d} records\n", .{N});
+    const n = records.len;
+    if (n == 0) return;
 
-    var labels = allocator.alloc(u8, N) catch return;
-    var means = allocator.alloc(f32, DIMS) catch return;
-    var stds = allocator.alloc(f32, DIMS) catch return;
-    var mins = allocator.alloc(f32, DIMS) catch return;
-    var maxs = allocator.alloc(f32, DIMS) catch return;
+    var means = try allocator.alloc(f32, DIMS);
+    var stds = try allocator.alloc(f32, DIMS);
+    var labels = try allocator.alloc(u8, n);
 
-    for (0..DIMS) |d| mins[d] = 99999;
-    for (0..DIMS) |d| maxs[d] = -99999;
+    @memset(means, 0.0);
+    @memset(stds, 0.0);
 
-    for (0..DIMS) |d| means[d] = 0;
-
-    for (record_array in records) |rec| {
+    for (records, 0..) |rec, i| {
         const vec = rec.object.get("vector").?.array;
         for (0..DIMS) |d| {
-            const val = vec[d].float;
-            means[d] += val;
-            if (val < mins[d]) mins[d] = val;
-            if (val > maxs[d]) maxs[d] = val;
+            means[d] += valueToF32(vec[d]);
         }
         const label = rec.object.get("label").?.string;
-        labels[@intFromPtr(record_array) / @sizeOf(json.Value)] = if (std.mem.eql(u8, label, "fraud")) 1 else 0;
+        labels[i] = if (std.mem.eql(u8, label, "fraud")) 1 else 0;
     }
 
-    for (0..DIMS) |d| means[d] /= @as(f32, @floatFromInt(N));
+    const n_f: f32 = @floatFromInt(n);
+    for (0..DIMS) |d| means[d] /= n_f;
 
-    for (0..DIMS) |d| stds[d] = 0;
-    for (record_array in records) |rec| {
+    for (records) |rec| {
         const vec = rec.object.get("vector").?.array;
         for (0..DIMS) |d| {
-            const diff = vec[d].float - means[d];
+            const diff = valueToF32(vec[d]) - means[d];
             stds[d] += diff * diff;
         }
     }
+
     for (0..DIMS) |d| {
-        stds[d] = @sqrt(stds[d] / @as(f32, @floatFromInt(N)));
-        if (stds[d] < 1e-6) stds[d] = 1;
+        stds[d] = @sqrt(stds[d] / n_f);
+        if (stds[d] < 1e-6) stds[d] = 1.0;
     }
 
-    std.debug.print("=== Normalizing and quantizing to int8...\n", .{});
-    var vectors_i8 = allocator.alloc(u8, N * 16) catch return;
+    var vectors_tmp = try allocator.alloc(u8, n * PADDED_DIMS);
+    @memset(vectors_tmp, 0);
 
-    for (i, rec) in records.len) |i, rec| {
+    for (records, 0..) |rec, i| {
         const vec = rec.object.get("vector").?.array;
+        const base = i * PADDED_DIMS;
         for (0..DIMS) |d| {
-            const normalized = (vec[d].float - means[d]) / stds[d];
-            var q: i32 = @intFromFloat(@round(normalized * 127));
-            if (q > 127) q = 127;
-            if (q < -127) q = -127;
-            if (q < 0) q += 256;
-            vectors_i8[i * 16 + d] = @as(u8, @intCast(q));
+            const normalized = (valueToF32(vec[d]) - means[d]) / stds[d];
+            vectors_tmp[base + d] = quantizeSignedToByte(normalized);
         }
     }
 
-    std.debug.print("=== Computing centroids via sampling...\n", .{});
-    var centroids = allocator.alloc(f32, NUM_CLUSTERS * DIMS) catch return;
-    var cluster_counts = allocator.alloc(u32, NUM_CLUSTERS) catch return;
+    var centroids_f32 = try allocator.alloc(f32, NUM_CLUSTERS * DIMS);
+    var centroid_counts = try allocator.alloc(u32, NUM_CLUSTERS);
+    @memset(centroids_f32, 0.0);
+    @memset(centroid_counts, 0);
 
-    const sample_size = @min(N, 50000);
-    var rng_seed: u32 = @intCast(std.time.timestamp());
-
+    const sample_size = @min(n, 50_000);
+    var seed: u32 = @intCast(std.time.timestamp());
     for (0..sample_size) |i| {
-        rng_seed = rng_seed * 1664525 + 1013904223;
-        const idx = @as(u32, rng_seed) % N;
-        const c = @as(u32, @intCast(i)) % NUM_CLUSTERS;
-        cluster_counts[c] += 1;
+        seed = seed * 1664525 + 1013904223;
+        const idx = @as(usize, seed) % n;
+        const c = i % NUM_CLUSTERS;
+        centroid_counts[c] += 1;
+
         const vec = records[idx].object.get("vector").?.array;
+        const centroid_base = c * DIMS;
         for (0..DIMS) |d| {
-            centroids[c * DIMS + d] += vec[d].float;
+            centroids_f32[centroid_base + d] += valueToF32(vec[d]);
         }
     }
 
     for (0..NUM_CLUSTERS) |c| {
-        if (cluster_counts[c] > 0) {
-            for (0..DIMS) |d| {
-                centroids[c * DIMS + d] /= @intToFloat(f32, cluster_counts[c]);
+        if (centroid_counts[c] == 0) continue;
+        const count_f: f32 = @floatFromInt(centroid_counts[c]);
+        const centroid_base = c * DIMS;
+        for (0..DIMS) |d| {
+            centroids_f32[centroid_base + d] /= count_f;
+        }
+    }
+
+    var centroids_i8 = try allocator.alloc(u8, NUM_CLUSTERS * PADDED_DIMS);
+    @memset(centroids_i8, 0);
+    for (0..NUM_CLUSTERS) |c| {
+        const centroid_base = c * DIMS;
+        const out_base = c * PADDED_DIMS;
+        for (0..DIMS) |d| {
+            const normalized = (centroids_f32[centroid_base + d] - means[d]) / stds[d];
+            centroids_i8[out_base + d] = quantizeSignedToByte(normalized);
+        }
+    }
+
+    var assign = try allocator.alloc(u16, n);
+    var cluster_counts = try allocator.alloc(u32, NUM_CLUSTERS);
+    @memset(cluster_counts, 0);
+
+    for (0..n) |i| {
+        const vbase = i * PADDED_DIMS;
+        var best_cluster: usize = 0;
+        var best_dist: i64 = std.math.maxInt(i64);
+
+        for (0..NUM_CLUSTERS) |c| {
+            const cbase = c * PADDED_DIMS;
+            var dist: i64 = 0;
+            for (0..PADDED_DIMS) |d| {
+                const v: i16 = @as(i8, @bitCast(vectors_tmp[vbase + d]));
+                const k: i16 = @as(i8, @bitCast(centroids_i8[cbase + d]));
+                const diff = @as(i32, v) - @as(i32, k);
+                dist += @as(i64, diff * diff);
+            }
+
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_cluster = c;
             }
         }
+
+        assign[i] = @intCast(best_cluster);
+        cluster_counts[best_cluster] += 1;
     }
 
-    std.debug.print("=== Writing binary files...\n", .{});
-
-    const vectors_path = std.fmt.allocPrintZ(allocator, "{s}/vectors_i8.bin", .{data_dir}) catch return;
-    std.fs.cwd().writeFile(vectors_path, vectors_i8) catch return;
-    std.debug.print("  vectors_i8.bin: {d} bytes\n", .{N * 16});
-
-    const labels_slice = labels[0..N];
-    const labels_path = std.fmt.allocPrintZ(allocator, "{s}/labels.bin", .{data_dir}) catch return;
-    std.fs.cwd().writeFile(labels_path, labels_slice) catch return;
-    std.debug.print("  labels.bin: {d} bytes\n", .{N});
-
-    const centroids_i8 = allocator.alloc(u8, NUM_CLUSTERS * 16) catch return;
-    for (c in 0..NUM_CLUSTERS) |c| {
-        for (d in 0..DIMS) |d| {
-            const val = centroids[c * DIMS + d];
-            const normalized = (val - means[d]) / stds[d];
-            var q: i32 = @intFromFloat(@round(normalized * 127));
-            if (q > 127) q = 127;
-            if (q < -127) q = -127;
-            if (q < 0) q += 256;
-            centroids_i8[c * 16 + d] = @as(u8, @intCast(q));
-        }
+    var cluster_offsets = try allocator.alloc(u32, NUM_CLUSTERS + 1);
+    cluster_offsets[0] = 0;
+    for (0..NUM_CLUSTERS) |c| {
+        cluster_offsets[c + 1] = cluster_offsets[c] + cluster_counts[c];
     }
 
-    const centroids_path = std.fmt.allocPrintZ(allocator, "{s}/centroids_i8.bin", .{data_dir}) catch return;
-    std.fs.cwd().writeFile(centroids_path, centroids_i8) catch return;
-    std.debug.print("  centroids_i8.bin: {d} bytes\n", .{NUM_CLUSTERS * 16});
+    var write_pos = try allocator.alloc(u32, NUM_CLUSTERS);
+    @memcpy(write_pos, cluster_offsets[0..NUM_CLUSTERS]);
 
-    std.debug.print("\nDone!\n", .{});
+    var vectors_out = try allocator.alloc(u8, n * PADDED_DIMS);
+    var labels_out = try allocator.alloc(u8, n);
+
+    for (0..n) |i| {
+        const c = assign[i];
+        const pos = write_pos[c];
+        write_pos[c] += 1;
+
+        const src_base = i * PADDED_DIMS;
+        const dst_base = @as(usize, pos) * PADDED_DIMS;
+        @memcpy(vectors_out[dst_base .. dst_base + PADDED_DIMS], vectors_tmp[src_base .. src_base + PADDED_DIMS]);
+        labels_out[pos] = labels[i];
+    }
+
+    const vectors_path = try std.fmt.allocPrint(allocator, "{s}/vectors_i8.bin", .{data_dir});
+    try std.fs.cwd().writeFile(vectors_path, vectors_out);
+
+    const labels_path = try std.fmt.allocPrint(allocator, "{s}/labels.bin", .{data_dir});
+    try std.fs.cwd().writeFile(labels_path, labels_out);
+
+    const centroids_path = try std.fmt.allocPrint(allocator, "{s}/centroids_i8.bin", .{data_dir});
+    try std.fs.cwd().writeFile(centroids_path, centroids_i8);
+
+    var cluster_offsets_bin = try allocator.alloc(u8, NUM_CLUSTERS * 8);
+    for (0..NUM_CLUSTERS) |c| {
+        const base = c * 8;
+        writeU32Le(cluster_offsets_bin[base .. base + 4], cluster_offsets[c]);
+        writeU32Le(cluster_offsets_bin[base + 4 .. base + 8], cluster_offsets[c + 1]);
+    }
+
+    const cluster_offsets_path = try std.fmt.allocPrint(allocator, "{s}/cluster_offsets.bin", .{data_dir});
+    try std.fs.cwd().writeFile(cluster_offsets_path, cluster_offsets_bin);
+
+    var scales_bin = try allocator.alloc(u8, DIMS * 4);
+    var offsets_bin = try allocator.alloc(u8, DIMS * 4);
+    for (0..DIMS) |d| {
+        const sbits: u32 = @bitCast(stds[d]);
+        const obits: u32 = @bitCast(means[d]);
+        writeU32Le(scales_bin[d * 4 .. d * 4 + 4], sbits);
+        writeU32Le(offsets_bin[d * 4 .. d * 4 + 4], obits);
+    }
+
+    const scales_path = try std.fmt.allocPrint(allocator, "{s}/scales.bin", .{data_dir});
+    try std.fs.cwd().writeFile(scales_path, scales_bin);
+
+    const offsets_path = try std.fmt.allocPrint(allocator, "{s}/offsets.bin", .{data_dir});
+    try std.fs.cwd().writeFile(offsets_path, offsets_bin);
+
+    std.debug.print("index generated: n={d}, clusters={d}\n", .{ n, NUM_CLUSTERS });
 }
