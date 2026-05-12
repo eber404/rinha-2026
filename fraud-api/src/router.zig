@@ -144,6 +144,9 @@ fn computeFraudScore(f: payload.Features) f32 {
 }
 
 fn handleFraudScore(body: []const u8, instance_id: []const u8) []const u8 {
+    if (!scorer_initialized) {
+        return "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 15\r\n\r\nService Unavailable";
+    }
     const f = payload.parsePayload(body);
     const query_vec = quantization.quantize(&f);
     const knn_score = global_scorer.score(&query_vec);

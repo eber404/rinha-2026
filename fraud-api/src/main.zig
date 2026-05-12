@@ -4,6 +4,12 @@ const router = @import("router.zig");
 
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]u8;
 
+fn handleClient(client_fd: c_int, instance_id: []const u8) void {
+    defer _ = std.os.linux.close(client_fd);
+    const r = http.Router{ .handler = router.route, .instance_id = instance_id };
+    http.handleConnection(client_fd, r) catch {};
+}
+
 pub fn main() void {
     const instance_id = if (getenv("INSTANCE_ID")) |val|
         std.mem.span(val)
@@ -21,13 +27,18 @@ pub fn main() void {
 
     std.debug.print("fraud-api-{s} listening on /tmp/rinha/api-{s}.sock\n", .{ instance_id, instance_id });
 
-    const r = http.Router{ .handler = router.route, .instance_id = instance_id };
-
     while (true) {
         const client_fd = @as(c_int, @intCast(std.os.linux.accept(sock_fd, null, null)));
-        if (client_fd < 0) continue;
+        if (client_fd < 0) {
+            var ts = std.os.linux.timespec{ .sec = 0, .nsec = 100_000_000 };
+            _ = std.os.linux.nanosleep(&ts, null);
+            continue;
+        }
 
-        http.handleConnection(client_fd, r) catch {};
-        _ = std.os.linux.close(client_fd);
+        if (std.Thread.spawn(.{}, handleClient, .{ client_fd, instance_id })) |thread| {
+            thread.detach();
+        } else |_| {
+            _ = std.os.linux.close(client_fd);
+        }
     }
 }

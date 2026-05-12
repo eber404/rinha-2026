@@ -1,5 +1,4 @@
 const std = @import("std");
-const main = @import("main");
 const testing = std.testing;
 
 const EXTERNAL_PORT = 9999;

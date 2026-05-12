@@ -46,4 +46,14 @@ opencode.json
 .ralph/
 .artifacts
 docs
-benchmarks
+benchmarks*.o
+*.obj
+*.exe
+main_debug
+main_native
+main_lb
+.zig-cache/
+zig-out/
+main_debug
+main_native
+main_lb

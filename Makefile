@@ -22,10 +22,15 @@ preprocess:
 	@cd fraud-api && ./scripts/pre-processing.sh
 
 test:
-	@echo "Testing load-balancer (native)..."
-	cd load-balancer && zig test --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-global-cache tests/main_test.zig
+	@echo "Testing load-balancer..."
+	docker exec -t load-balancer sh -c 'cd /app && zig test --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-global-cache tests/main_test.zig 2>&1' || \
+		(echo "Containers not running, building first..." && docker-compose build && docker-compose up -d && \
+		docker exec -t load-balancer sh -c 'cd /app && zig test --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-global-cache tests/main_test.zig 2>&1')
 	@echo "Testing fraud-api..."
-	docker run --rm -i rinha-2026-fraud-api-1 sh -c 'zig build test 2>&1; echo "EXIT: $$?"'
+	docker exec -t fraud-api-1 sh -c 'cd /app && zig build test 2>&1' || \
+		(echo "Containers not running, building first..." && docker-compose build && docker-compose up -d && \
+		docker exec -t fraud-api-1 sh -c 'cd /app && zig build test 2>&1')
+	@echo "All tests passed!"
 
 clean:
 	@echo "Cleaning artifacts..."

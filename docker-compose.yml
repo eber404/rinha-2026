@@ -7,9 +7,9 @@ services:
     volumes:
       - ./fraud-api/vector-index:/app/vector-index:rw
       - ./fraud-api/tests:/app/tests:ro
-      - ./fraud-api/main_debug:/app/main:ro
       - rinha-sockets:/tmp/rinha
-      - ./load-balancer/main_lb:/app/main_lb:ro
+      - zig-cache:/tmp/zig-cache
+      - ./fraud-api/main_debug:/app/main:ro
     networks:
       - rinha-net
     restart: on-failure
@@ -38,8 +38,9 @@ services:
       - '9999:9999'
     volumes:
       - ./load-balancer/tests:/app/tests:ro
-      - ./load-balancer/main_lb:/app/main:ro
       - rinha-sockets:/tmp/rinha
+      - zig-cache:/tmp/zig-cache
+      - ./load-balancer/main_lb:/app/main:ro
     environment:
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
       - ZIG_CACHE_DIR=/tmp/zig-cache
@@ -53,7 +54,7 @@ services:
       resources:
         limits:
           cpus: '0.10'
-          memory: '100MB'
+          memory: '300MB'
 
 networks:
   rinha-net:
@@ -61,3 +62,4 @@ networks:
 
 volumes:
   rinha-sockets:
+  zig-cache:
