@@ -1,7 +1,7 @@
 const std = @import("std");
-const dataset = @import("../../fraud-api/src/dataset.zig");
-const scorer = @import("../../fraud-api/src/scorer.zig");
-const quantization = @import("../../fraud-api/src/quantization.zig");
+const dataset = @import("dataset.zig");
+const scorer = @import("scorer.zig");
+const quantization = @import("quantization.zig");
 
 pub const ScoreReq = extern struct {
     transaction_amount: f32,
@@ -33,11 +33,11 @@ var global_dataset: dataset.Dataset = undefined;
 var global_scorer: scorer.Scorer = undefined;
 var initialized = false;
 
-pub export fn score_abi_version() callconv(.C) u32 {
+pub export fn score_abi_version() callconv(.c) u32 {
     return 1;
 }
 
-pub export fn score_init(data_dir: [*:0]const u8) callconv(.C) u8 {
+pub export fn score_init(data_dir: [*:0]const u8) callconv(.c) u8 {
     if (initialized) return 0;
     global_dataset = dataset.Dataset.init();
     global_dataset.load(std.mem.span(data_dir)) catch return 1;
@@ -46,7 +46,7 @@ pub export fn score_init(data_dir: [*:0]const u8) callconv(.C) u8 {
     return 0;
 }
 
-pub export fn score_eval(req: *const ScoreReq, res: *ScoreRes) callconv(.C) u8 {
+pub export fn score_eval(req: *const ScoreReq, res: *ScoreRes) callconv(.c) u8 {
     if (!initialized) {
         res.* = .{ .score = 0.0, .err_code = 1 };
         return 1;
@@ -78,7 +78,7 @@ pub export fn score_eval(req: *const ScoreReq, res: *ScoreRes) callconv(.C) u8 {
     return 0;
 }
 
-pub export fn score_shutdown() callconv(.C) void {
+pub export fn score_shutdown() callconv(.c) void {
     if (!initialized) return;
     global_dataset.deinit();
     initialized = false;
