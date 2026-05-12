@@ -17,6 +17,11 @@ services:
       - INSTANCE_ID=1
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
       - ZIG_CACHE_DIR=/tmp/zig-cache
+    deploy:
+      resources:
+        limits:
+          cpus: '0.70'
+          memory: '160MB'
 
   fraud-api-2:
     <<: *fraud-api
@@ -24,21 +29,23 @@ services:
     environment:
       - INSTANCE_ID=2
 
-  load-balancer:
-    build:
-      context: ./load-balancer
-      dockerfile: Dockerfile
-    container_name: load-balancer
+  haproxy:
+    image: haproxy:lts-alpine
+    container_name: haproxy
+    user: "0:0"
     ports:
       - '9999:9999'
+    depends_on:
+      - fraud-api-1
+      - fraud-api-2
     volumes:
-      - ./load-balancer/tests:/app/tests:ro
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - rinha-sockets:/tmp/rinha
-      - zig-cache:/tmp/zig-cache
-      - ./load-balancer/main_arm64:/app/main
-    environment:
-      - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
-      - ZIG_CACHE_DIR=/tmp/zig-cache
+    deploy:
+      resources:
+        limits:
+          cpus: '0.10'
+          memory: '30MB'
 
 networks:
   rinha-net:

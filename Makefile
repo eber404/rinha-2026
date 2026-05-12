@@ -11,13 +11,11 @@ DOCKER_RUN := docker-compose run --rm
 
 build:
 	@echo "Stopping services before rebuilding binaries..."
-	@docker-compose stop load-balancer fraud-api-1 fraud-api-2 >/dev/null 2>&1 || true
-	@echo "Building load-balancer..."
-	$(DOCKER_RUN) load-balancer zig build-exe src/main.zig -O ReleaseSmall -target aarch64-linux-musl -lc --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-cache -femit-bin=main
+	@docker-compose stop haproxy fraud-api-1 fraud-api-2 >/dev/null 2>&1 || true
 	@echo "Building fraud-api..."
 	$(DOCKER_RUN) fraud-api-1 zig build-exe src/main.zig -O ReleaseSmall -target aarch64-linux-musl -lc --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-cache -femit-bin=main
 	@echo "Starting services with rebuilt binaries..."
-	@docker-compose up -d load-balancer fraud-api-1 fraud-api-2
+	@docker-compose up -d --remove-orphans haproxy fraud-api-1 fraud-api-2
 
 up:
 	docker-compose up --build
@@ -26,10 +24,6 @@ preprocess:
 	@cd fraud-api && ./scripts/pre-processing.sh
 
 test:
-	@echo "Testing load-balancer..."
-	docker exec -t load-balancer sh -c 'cd /app && zig test --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-global-cache tests/main_test.zig 2>&1' || \
-		(echo "Containers not running, building first..." && docker-compose build && docker-compose up -d && \
-		docker exec -t load-balancer sh -c 'cd /app && zig test --cache-dir /tmp/zig-cache --global-cache-dir /tmp/zig-global-cache tests/main_test.zig 2>&1')
 	@echo "Testing fraud-api..."
 	docker exec -t fraud-api-1 sh -c 'cd /app && zig build test 2>&1' || \
 		(echo "Containers not running, building first..." && docker-compose build && docker-compose up -d && \

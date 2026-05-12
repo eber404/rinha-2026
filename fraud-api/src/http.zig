@@ -119,6 +119,8 @@ pub fn createAndBindUdsSocket(instance_id: []const u8) !c_int {
         return error.BindFailed;
     }
 
+    _ = linux.chmod(sock_path, 0o777);
+
     if (linux.listen(fd, 128) != 0) {
         _ = linux.close(fd);
         return error.ListenFailed;
