@@ -27,26 +27,32 @@ pub fn main() !void {
     while (true) {
         const client_fd = @as(c_int, @intCast(linux.accept(listen_fd, null, null)));
         if (client_fd < 0) continue;
-        defer _ = linux.close(client_fd);
 
         const idx = @atomicLoad(u32, &backend_idx, .monotonic);
         const bidx = idx % NUM_BACKENDS;
-
-        const backend_fd = connectBackend(UDS_PATHS[bidx]);
-        if (backend_fd) |bfd| {
-            defer _ = linux.close(bfd);
-            proxyLoop(client_fd, bfd);
-        } else {
-            const alt_idx = (bidx + 1) % NUM_BACKENDS;
-            const alt_fd = connectBackend(UDS_PATHS[alt_idx]);
-            if (alt_fd) |afd| {
-                defer _ = linux.close(afd);
-                proxyLoop(client_fd, afd);
-            }
-        }
-
         _ = @atomicStore(u32, &backend_idx, idx + 1, .monotonic);
+
+        const backend_fd = connectBackend(UDS_PATHS[bidx]) orelse blk: {
+            const alt_idx = (bidx + 1) % NUM_BACKENDS;
+            break :blk connectBackend(UDS_PATHS[alt_idx]) orelse {
+                _ = linux.close(client_fd);
+                continue;
+            };
+        };
+
+        if (std.Thread.spawn(.{}, handleClient, .{ client_fd, backend_fd })) |thread| {
+            thread.detach();
+        } else |_| {
+            _ = linux.close(client_fd);
+            _ = linux.close(backend_fd);
+        }
     }
+}
+
+fn handleClient(client_fd: c_int, backend_fd: c_int) void {
+    defer _ = linux.close(client_fd);
+    defer _ = linux.close(backend_fd);
+    proxyLoop(client_fd, backend_fd);
 }
 
 fn createSocketDir() !void {

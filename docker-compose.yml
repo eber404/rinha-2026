@@ -7,7 +7,9 @@ services:
     volumes:
       - ./fraud-api/vector-index:/app/vector-index:rw
       - ./fraud-api/tests:/app/tests:ro
+      - ./fraud-api/main_debug:/app/main:ro
       - rinha-sockets:/tmp/rinha
+      - ./load-balancer/main_lb:/app/main_lb:ro
     networks:
       - rinha-net
     restart: on-failure
@@ -36,6 +38,7 @@ services:
       - '9999:9999'
     volumes:
       - ./load-balancer/tests:/app/tests:ro
+      - ./load-balancer/main_lb:/app/main:ro
       - rinha-sockets:/tmp/rinha
     environment:
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
