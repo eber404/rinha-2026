@@ -15,6 +15,18 @@ test "route GET /ready" {
     try std.testing.expect(std.mem.containsAtLeast(u8, resp, 1, "\"instance\":\"1\""));
 }
 
+test "route GET /ready has correct content-length" {
+    const resp = router.route("GET", "/ready", "", "1");
+    const header_end = std.mem.indexOf(u8, resp, "\r\n\r\n") orelse return error.TestUnexpectedResult;
+    const body = resp[header_end + 4 ..];
+    const key = "Content-Length: ";
+    const key_pos = std.mem.indexOf(u8, resp, key) orelse return error.TestUnexpectedResult;
+    const len_start = key_pos + key.len;
+    const len_end = std.mem.indexOfPos(u8, resp, len_start, "\r\n") orelse return error.TestUnexpectedResult;
+    const declared = try std.fmt.parseInt(usize, resp[len_start..len_end], 10);
+    try std.testing.expectEqual(declared, body.len);
+}
+
 test "route GET /fraud-score returns 405" {
     const resp = router.route("GET", "/fraud-score", "", "1");
     try std.testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 405 Method Not Allowed"));

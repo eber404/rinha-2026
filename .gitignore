@@ -57,3 +57,5 @@ zig-out/
 main_debug
 main_native
 main_lb
+
+benchmarks

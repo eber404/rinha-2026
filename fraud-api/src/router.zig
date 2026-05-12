@@ -40,7 +40,7 @@ pub fn route(method: []const u8, path: []const u8, body: []const u8, instance_id
 
 fn buildReadyResponse(instance: []const u8) []const u8 {
     const inst_len = instance.len;
-    const json_len = 22 + inst_len;
+    const json_len = 28 + inst_len;
     var pos: usize = 0;
 
     @memcpy(ready_http_buf[pos..pos+8], "HTTP/1.1");

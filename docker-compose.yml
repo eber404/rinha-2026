@@ -9,7 +9,7 @@ services:
       - ./fraud-api/tests:/app/tests:ro
       - rinha-sockets:/tmp/rinha
       - zig-cache:/tmp/zig-cache
-      - ./fraud-api/main_debug:/app/main:ro
+      - ./fraud-api/main_arm64:/app/main
     networks:
       - rinha-net
     restart: on-failure
@@ -17,11 +17,6 @@ services:
       - INSTANCE_ID=1
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
       - ZIG_CACHE_DIR=/tmp/zig-cache
-    deploy:
-      resources:
-        limits:
-          cpus: '0.45'
-          memory: '350MB'
 
   fraud-api-2:
     <<: *fraud-api
@@ -40,21 +35,10 @@ services:
       - ./load-balancer/tests:/app/tests:ro
       - rinha-sockets:/tmp/rinha
       - zig-cache:/tmp/zig-cache
-      - ./load-balancer/main_lb:/app/main:ro
+      - ./load-balancer/main_arm64:/app/main
     environment:
       - ZIG_GLOBAL_CACHE_DIR=/tmp/zig-cache
       - ZIG_CACHE_DIR=/tmp/zig-cache
-    networks:
-      - rinha-net
-    restart: always
-    depends_on:
-      - fraud-api-1
-      - fraud-api-2
-    deploy:
-      resources:
-        limits:
-          cpus: '0.10'
-          memory: '300MB'
 
 networks:
   rinha-net:
