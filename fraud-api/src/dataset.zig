@@ -112,6 +112,12 @@ inline fn toO(_: []const u8) linux.O {
         d.cluster_offsets_mmap = mmapFile(d.cluster_offsets_fd, CLUSTER_OFFSETS_SIZE) orelse return error.OpenFailed;
         d.scales_mmap = mmapFile(d.scales_fd, SCALES_SIZE) orelse return error.OpenFailed;
         d.offsets_mmap = mmapFile(d.offsets_fd, OFFSETS_SIZE) orelse return error.OpenFailed;
+
+        if (d.vectors_mmap.len % 16 != 0) return error.OpenFailed;
+        if (d.centroids_mmap.len % 16 != 0) return error.OpenFailed;
+        if (d.cluster_offsets_mmap.len % 8 != 0) return error.OpenFailed;
+        if (d.scales_mmap.len != 56) return error.OpenFailed;
+        if (d.offsets_mmap.len != 56) return error.OpenFailed;
     }
 
     pub fn deinit(d: *Dataset) void {
