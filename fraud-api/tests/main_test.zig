@@ -1,5 +1,5 @@
 const std = @import("std");
-const router = @import("src/router.zig");
+const router = @import("router");
 const testing = std.testing;
 
 test "initScorer does not panic" {

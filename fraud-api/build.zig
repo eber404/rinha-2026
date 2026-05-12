@@ -26,6 +26,55 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
+    const router_mod = b.addModule("router", .{
+        .root_source_file = b.path("src/router.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const payload_mod = b.addModule("payload", .{
+        .root_source_file = b.path("src/payload.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const quantization_mod = b.addModule("quantization", .{
+        .root_source_file = b.path("src/quantization.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const scorer_mod = b.addModule("scorer", .{
+        .root_source_file = b.path("src/scorer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const dataset_mod = b.addModule("dataset", .{
+        .root_source_file = b.path("src/dataset.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const http_mod = b.addModule("http", .{
+        .root_source_file = b.path("src/http.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const response_mod = b.addModule("response", .{
+        .root_source_file = b.path("src/response.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/main_test.zig"),
@@ -33,6 +82,13 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "main", .module = mod },
+                .{ .name = "router", .module = router_mod },
+                .{ .name = "payload", .module = payload_mod },
+                .{ .name = "quantization", .module = quantization_mod },
+                .{ .name = "scorer", .module = scorer_mod },
+                .{ .name = "dataset", .module = dataset_mod },
+                .{ .name = "http", .module = http_mod },
+                .{ .name = "response", .module = response_mod },
             },
         }),
     });

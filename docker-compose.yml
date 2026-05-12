@@ -19,7 +19,7 @@ services:
       resources:
         limits:
           cpus: '0.45'
-          memory: '157MB'
+          memory: '350MB'
 
   fraud-api-2:
     <<: *fraud-api
@@ -50,7 +50,7 @@ services:
       resources:
         limits:
           cpus: '0.10'
-          memory: '35MB'
+          memory: '100MB'
 
 networks:
   rinha-net:

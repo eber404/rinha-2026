@@ -33,7 +33,7 @@ pub fn route(method: []const u8, path: []const u8, body: []const u8, instance_id
         if (method.len == 3 and std.mem.eql(u8, method, "GET")) {
             return buildReadyResponse(instance_id);
         }
-        return static_404;
+        return static_405;
     }
     return static_404;
 }
