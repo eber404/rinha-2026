@@ -184,6 +184,7 @@ pub const Scorer = struct {
 
         const clusters_to_scan = @min(s.n_clusters, 256);
         const nprobe_count: usize = @intCast(@min(nprobe, s.n_clusters));
+        const q_i16 = queryToVec16I16(query);
         var best_indices: [NPROBE]u32 = undefined;
         var best_dists: [NPROBE]i32 = undefined;
         @memset(&best_indices, 0);
@@ -192,8 +193,9 @@ pub const Scorer = struct {
         var best_count: usize = 0;
         var i: u32 = 0;
         while (i < clusters_to_scan) : (i += 1) {
-            const c = s.dataset.centroidAt(i);
-            const dist = distance(query, &c);
+            const centroid_offset = @as(usize, i) * 16;
+            const centroid_bytes = s.dataset.centroids_mmap[centroid_offset .. centroid_offset + 16];
+            const dist = distanceFromBytesVec(q_i16, centroid_bytes);
 
             if (best_count < nprobe_count) {
                 var pos = best_count;
@@ -238,7 +240,8 @@ pub const Scorer = struct {
         var top_k = TopK.init();
 
         var remaining_budget: u32 = TOTAL_SCAN_BUDGET;
-        for (0..NPROBE) |i| {
+        const probes_total: usize = NPROBE;
+        for (0..probes_total) |i| {
             if (remaining_budget == 0) break;
             const cluster_id = cluster_indices[i];
             if (cluster_id >= s.n_clusters) continue;
@@ -251,7 +254,7 @@ pub const Scorer = struct {
             const end = @min(range.end, max_vec_idx);
             if (end <= start) continue;
 
-            const probes_left = @as(u32, @intCast(NPROBE - i));
+            const probes_left = @as(u32, @intCast(probes_total - i));
             const per_cluster_budget = @max(@divTrunc(remaining_budget, probes_left), 1);
             const cluster_len = end - start;
             const scan_len = @min(cluster_len, per_cluster_budget);
