@@ -68,6 +68,12 @@ def to_ms(us):
     return us / 1000.0
 
 
+def hap_to_ms(v, unit):
+    if unit == "ms":
+        return float(v)
+    return float(v) / 1000.0
+
+
 def summarize(name, values):
     return (
         f"| {name} | {pct(values, 0.50):.3f} | {pct(values, 0.95):.3f} |"
@@ -79,6 +85,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--haproxy-unit", choices=["us", "ms"], default="us")
     args = ap.parse_args()
 
     hap = parse_haproxy(os.path.join(args.input, "haproxy.log"))
@@ -94,15 +101,15 @@ def main():
         go_total_ms = to_ms(g.get("t_total_us", 0))
         row = {
             "req_id": req_id,
-            "lb_qw_ms": float(max(h["Tq"], h["Tw"])),
-            "lb_tr_ms": float(h["Tr"]),
-            "lb_tt_ms": float(h["Tt"]),
+            "lb_qw_ms": hap_to_ms(max(h["Tq"], h["Tw"]), args.haproxy_unit),
+            "lb_tr_ms": hap_to_ms(h["Tr"], args.haproxy_unit),
+            "lb_tt_ms": hap_to_ms(h["Tt"], args.haproxy_unit),
             "go_read_ms": to_ms(g.get("t_read_us", 0)),
             "go_parse_ms": to_ms(g.get("t_parse_us", 0)),
             "go_eval_ms": to_ms(g.get("t_eval_us", 0)),
             "go_resp_ms": to_ms(g.get("t_resp_us", 0)),
             "go_total_ms": go_total_ms,
-            "net_handoff_ms": float(h["Tr"]) - go_total_ms,
+            "non_go_overhead_ms": hap_to_ms(h["Tt"], args.haproxy_unit) - go_total_ms,
             "status": h["status"],
         }
         rows.append(row)
@@ -116,7 +123,7 @@ def main():
         "go_eval_ms",
         "go_resp_ms",
         "go_total_ms",
-        "net_handoff_ms",
+        "non_go_overhead_ms",
     ]
 
     md = []
@@ -131,12 +138,12 @@ def main():
 
     top = sorted(rows, key=lambda r: r["lb_tt_ms"], reverse=True)[:5]
     md.append("\n## Top 5 Tail Requests (by lb_tt_ms)\n")
-    md.append("| req_id | status | lb_tt_ms | lb_qw_ms | lb_tr_ms | go_total_ms | go_eval_ms | net_handoff_ms |\n")
+    md.append("| req_id | status | lb_tt_ms | lb_qw_ms | lb_tr_ms | go_total_ms | go_eval_ms | non_go_overhead_ms |\n")
     md.append("|---|---:|---:|---:|---:|---:|---:|---:|\n")
     for r in top:
         md.append(
             f"| `{r['req_id']}` | {r['status']} | {r['lb_tt_ms']:.3f} | {r['lb_qw_ms']:.3f}"
-            f" | {r['lb_tr_ms']:.3f} | {r['go_total_ms']:.3f} | {r['go_eval_ms']:.3f} | {r['net_handoff_ms']:.3f} |\n"
+            f" | {r['lb_tr_ms']:.3f} | {r['go_total_ms']:.3f} | {r['go_eval_ms']:.3f} | {r['non_go_overhead_ms']:.3f} |\n"
         )
 
     bottleneck = "lb_queue_or_wait"
