@@ -277,6 +277,13 @@ pub const Scorer = struct {
                 const vec_offset = @as(u64, j) * 16;
                 if (vec_offset + 16 > vec_slice.len) break;
 
+                if (j + 2 < scan_len) {
+                    const pf_offset = @as(usize, @intCast((@as(u64, j) + 2) * 16));
+                    if (pf_offset + 16 <= vec_slice.len) {
+                        @prefetch(vec_slice.ptr + pf_offset, .{ .rw = .read, .cache = .data, .locality = 3 });
+                    }
+                }
+
                 const vbytes = vec_slice[vec_offset .. vec_offset + 16];
                 const dist = distanceFromBytesVec(q_i16, vbytes);
                 const global_idx = start + j;
