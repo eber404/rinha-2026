@@ -1,4 +1,4 @@
-.PHONY: benchmark build up preprocess test clean
+.PHONY: benchmark build up preprocess test clean perfloop
 
 OFFICIAL_REPO_DIR := .cache/rinha-official
 OFFICIAL_REPO_URL := https://github.com/zanfranceschi/rinha-de-backend-2026
@@ -8,6 +8,13 @@ UID := $(shell id -u)
 GID := $(shell id -g)
 
 DOCKER_RUN := docker-compose run --rm
+
+PERFLOOP_ITERATIONS ?= 3
+PERF_MAX_NS ?= 999999
+PERF_ITERS ?= 200
+PERF_WARMUP_ITERS ?= 50
+PERF_DOCKER_IMAGE ?= rinha-zig-perf:0.16.0
+PERF_DATA_DIR_HOST ?= /Users/eber/dev/rinha-2026/fraud-engine/vector-index
 
 build:
 	@echo "Stopping services before rebuilding binaries..."
@@ -53,3 +60,47 @@ benchmark:
 	@cd "$(OFFICIAL_REPO_DIR)" && ./run.sh
 	@cp "$(OFFICIAL_REPO_DIR)/test/results.json" "$(BENCHMARK_FILE)"
 	@echo "Saved benchmark to $(BENCHMARK_FILE)"
+
+perfloop:
+	@set -eu; \
+	iterations="$(PERFLOOP_ITERATIONS)"; \
+	if [ "$$iterations" -lt 1 ]; then \
+		echo "PERFLOOP_ITERATIONS must be >= 1"; \
+		exit 1; \
+	fi; \
+	echo "Building perf runner image ($(PERF_DOCKER_IMAGE))..."; \
+	docker build -f server/Dockerfile --target zig-builder -t "$(PERF_DOCKER_IMAGE)" . >/dev/null; \
+	sum=0; \
+	run=1; \
+	while [ $$run -le $$iterations ]; do \
+		echo "Run $$run/$$iterations"; \
+		set +e; \
+		output="$$(docker run --rm \
+			-v "$(CURDIR)":/workspace \
+			-v "$(PERF_DATA_DIR_HOST)":/perf-data:ro \
+			-w /workspace \
+			-e RUN_PERF_TESTS=1 \
+			-e PERF_DATA_DIR=/perf-data \
+			-e PERF_MAX_NS=$(PERF_MAX_NS) \
+			-e PERF_ITERS=$(PERF_ITERS) \
+			-e PERF_WARMUP_ITERS=$(PERF_WARMUP_ITERS) \
+			"$(PERF_DOCKER_IMAGE)" \
+			zig test fraud-engine/src/scorer.zig -O ReleaseFast 2>&1)"; \
+		status=$$?; \
+		set -e; \
+		printf "%s\n" "$$output"; \
+		if [ $$status -ne 0 ]; then \
+			echo "Run $$run failed with status $$status"; \
+			exit $$status; \
+		fi; \
+		ns="$$(printf "%s\n" "$$output" | sed -n 's/.*ns\/op=\([0-9][0-9]*\).*/\1/p' | tail -n 1)"; \
+		if [ -z "$$ns" ]; then \
+			echo "Could not extract ns/op from perf output"; \
+			exit 1; \
+		fi; \
+		echo "Run $$run result: $$ns ns/op"; \
+		sum=$$((sum + ns)); \
+		run=$$((run + 1)); \
+	done; \
+	avg=$$((sum / iterations)); \
+	echo "Average over $$iterations runs: $$avg ns/op"

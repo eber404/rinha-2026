@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const quantization = @import("quantization.zig");
 const dataset = @import("dataset.zig");
 
@@ -86,32 +87,79 @@ fn distance(q: *const QueryVector, v: []const i8) i32 {
     return sum;
 }
 
-inline fn sqDiff(q: i8, b: u8) i32 {
-    const diff = @as(i32, q) - @as(i32, @as(i8, @bitCast(b)));
-    return diff * diff;
+const Vec16I8 = @Vector(16, i8);
+const Vec16I16 = @Vector(16, i16);
+const Vec16I32 = @Vector(16, i32);
+
+inline fn queryToVec16I16(q: *const QueryVector) Vec16I16 {
+    const q_i8: Vec16I8 = q.*;
+    return @as(Vec16I16, q_i8);
 }
 
-fn distanceFromBytes(q: *const QueryVector, vbytes: []const u8) i32 {
-    return sqDiff(q[0], vbytes[0]) +
-        sqDiff(q[1], vbytes[1]) +
-        sqDiff(q[2], vbytes[2]) +
-        sqDiff(q[3], vbytes[3]) +
-        sqDiff(q[4], vbytes[4]) +
-        sqDiff(q[5], vbytes[5]) +
-        sqDiff(q[6], vbytes[6]) +
-        sqDiff(q[7], vbytes[7]) +
-        sqDiff(q[8], vbytes[8]) +
-        sqDiff(q[9], vbytes[9]) +
-        sqDiff(q[10], vbytes[10]) +
-        sqDiff(q[11], vbytes[11]) +
-        sqDiff(q[12], vbytes[12]) +
-        sqDiff(q[13], vbytes[13]) +
-        sqDiff(q[14], vbytes[14]) +
-        sqDiff(q[15], vbytes[15]);
+inline fn distanceFromBytesVec(q_i16: Vec16I16, vbytes: []const u8) i32 {
+    const v_u8: @Vector(16, u8) = vbytes[0..16].*;
+    const v_i8: Vec16I8 = @bitCast(v_u8);
+    const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+    const diff: Vec16I16 = q_i16 - v_i16;
+    const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+    const sq: Vec16I32 = diff_i32 * diff_i32;
+    return @reduce(.Add, sq);
 }
 
 inline fn shouldSampleStats(req_num: u64) bool {
     return (req_num & (STATS_SAMPLE_RATE - 1)) == 0;
+}
+
+fn getPerfEnv(name: []const u8) ?[]const u8 {
+    if (!builtin.is_test) return null;
+    return std.process.Environ.getPosix(std.testing.environ, name);
+}
+
+fn perfTestsEnabled() bool {
+    const raw = getPerfEnv("RUN_PERF_TESTS") orelse return false;
+    return std.mem.eql(u8, raw, "1") or std.ascii.eqlIgnoreCase(raw, "true") or std.ascii.eqlIgnoreCase(raw, "yes");
+}
+
+fn parseEnvU64(name: []const u8, default_value: u64) u64 {
+    const raw = getPerfEnv(name) orelse return default_value;
+    return std.fmt.parseInt(u64, raw, 10) catch default_value;
+}
+
+fn monotonicNowNs() u64 {
+    var ts: std.os.linux.timespec = undefined;
+    if (std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts) != 0) return 0;
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
+}
+
+fn runScorePerfGate() !void {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const warmup_iters = @max(parseEnvU64("PERF_WARMUP_ITERS", 5_000), 1);
+    const iters = @max(parseEnvU64("PERF_ITERS", 20_000), 1);
+    const max_ns = @max(parseEnvU64("PERF_MAX_NS", 3_500), 1);
+    const data_dir = getPerfEnv("PERF_DATA_DIR") orelse "fraud-engine/vector-index";
+
+    var ds = dataset.Dataset.init();
+    defer ds.deinit();
+    try ds.load(data_dir);
+
+    var scorer_instance = Scorer.init(&ds);
+    const query: QueryVector = .{ 7, -4, 31, -16, 22, 8, -11, 3, 9, -2, 5, 1, -7, 13, -19, 27 };
+    var sink: f32 = 0.0;
+
+    var i: u64 = 0;
+    while (i < warmup_iters) : (i += 1) sink += scorer_instance.score(&query);
+
+    const start_ns = monotonicNowNs();
+    i = 0;
+    while (i < iters) : (i += 1) sink += scorer_instance.score(&query);
+    const end_ns = monotonicNowNs();
+    if (end_ns <= start_ns) return error.SkipZigTest;
+
+    const ns_per_op = (end_ns - start_ns) / iters;
+    std.debug.print("perf(score): ns/op={d} max={d} iters={d} warmup={d} sink={d}\n", .{ ns_per_op, max_ns, iters, warmup_iters, sink });
+    try std.testing.expect(ns_per_op <= max_ns);
+    try std.testing.expect(!std.math.isNan(sink));
 }
 
 pub const Scorer = struct {
@@ -134,33 +182,44 @@ pub const Scorer = struct {
 
         if (s.n_clusters == 0 or nprobe == 0) return result;
 
-        var centroid_dists: [256]i32 = undefined;
-        @memset(&centroid_dists, 0);
-
         const clusters_to_scan = @min(s.n_clusters, 256);
+        const nprobe_count: usize = @intCast(@min(nprobe, s.n_clusters));
+        var best_indices: [NPROBE]u32 = undefined;
+        var best_dists: [NPROBE]i32 = undefined;
+        @memset(&best_indices, 0);
+        for (0..NPROBE) |k| best_dists[k] = std.math.maxInt(i32);
+
+        var best_count: usize = 0;
         var i: u32 = 0;
         while (i < clusters_to_scan) : (i += 1) {
             const c = s.dataset.centroidAt(i);
-            centroid_dists[i] = distance(query, &c);
+            const dist = distance(query, &c);
+
+            if (best_count < nprobe_count) {
+                var pos = best_count;
+                while (pos > 0 and dist < best_dists[pos - 1]) : (pos -= 1) {
+                    best_dists[pos] = best_dists[pos - 1];
+                    best_indices[pos] = best_indices[pos - 1];
+                }
+                best_dists[pos] = dist;
+                best_indices[pos] = i;
+                best_count += 1;
+                continue;
+            }
+
+            if (nprobe_count == 0 or dist >= best_dists[nprobe_count - 1]) continue;
+
+            var pos = nprobe_count - 1;
+            while (pos > 0 and dist < best_dists[pos - 1]) : (pos -= 1) {
+                best_dists[pos] = best_dists[pos - 1];
+                best_indices[pos] = best_indices[pos - 1];
+            }
+            best_dists[pos] = dist;
+            best_indices[pos] = i;
         }
 
-        var selected: [256]bool = undefined;
-        for (0..256) |sel_i| selected[sel_i] = false;
-
-        const nprobe_count = @min(nprobe, s.n_clusters);
-        var probe_i: u32 = 0;
-        while (probe_i < nprobe_count) : (probe_i += 1) {
-            var best_idx: u32 = 0;
-            var best_dist: i32 = std.math.maxInt(i32);
-            var j: u32 = 0;
-            while (j < clusters_to_scan) : (j += 1) {
-                if (!selected[j] and centroid_dists[j] < best_dist) {
-                    best_dist = centroid_dists[j];
-                    best_idx = j;
-                }
-            }
-            result[probe_i] = best_idx;
-            selected[best_idx] = true;
+        for (0..nprobe_count) |k| {
+            result[k] = best_indices[k];
         }
 
         return result;
@@ -174,6 +233,7 @@ pub const Scorer = struct {
         }
 
         const cluster_indices = s.findNearestClusters(query, NPROBE);
+        const q_i16 = queryToVec16I16(query);
 
         var top_k = TopK.init();
 
@@ -213,7 +273,7 @@ pub const Scorer = struct {
                 if (vec_offset + 16 > vec_slice.len) break;
 
                 const vbytes = vec_slice[vec_offset .. vec_offset + 16];
-                const dist = distanceFromBytes(query, vbytes);
+                const dist = distanceFromBytesVec(q_i16, vbytes);
                 const global_idx = start + j;
                 top_k.insert(dist, global_idx);
             }
@@ -233,7 +293,7 @@ pub const Scorer = struct {
                 if (vec_offset + 16 > s.dataset.vectors_mmap.len) break;
 
                 const vbytes = s.dataset.vectors_mmap[vec_offset .. vec_offset + 16];
-                const dist = distanceFromBytes(query, vbytes);
+                const dist = distanceFromBytesVec(q_i16, vbytes);
                 top_k.insertUnique(dist, idx);
             }
         }
@@ -263,7 +323,7 @@ test "distance from bytes equals distance from array" {
     for (0..16) |i| v[i] = @as(i8, @bitCast(raw[i]));
 
     const want = distance(&q, &v);
-    const got = distanceFromBytes(&q, raw[0..]);
+    const got = distanceFromBytesVec(queryToVec16I16(&q), raw[0..]);
     try std.testing.expectEqual(want, got);
 }
 
@@ -280,4 +340,9 @@ test "shouldSampleStats samples each 64 requests" {
     try std.testing.expect(!shouldSampleStats(63));
     try std.testing.expect(shouldSampleStats(64));
     try std.testing.expect(shouldSampleStats(128));
+}
+
+test "score hot path performance gate" {
+    if (!perfTestsEnabled()) return error.SkipZigTest;
+    try runScorePerfGate();
 }
