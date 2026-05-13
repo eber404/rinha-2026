@@ -7,6 +7,10 @@ SCRIPT_DIR="$ROOT_DIR/fraud-api/scripts"
 
 mkdir -p "$DATA_DIR"
 
+: "${REFS_URL:?REFS_URL is required}"
+: "${NORMALIZATION_URL:?NORMALIZATION_URL is required}"
+: "${MCC_RISK_URL:?MCC_RISK_URL is required}"
+
 if [ -f "$DATA_DIR/vectors_i8.bin" ] && \
    [ -f "$DATA_DIR/labels.bin" ] && \
    [ -f "$DATA_DIR/centroids_i8.bin" ] && \
@@ -17,9 +21,9 @@ if [ -f "$DATA_DIR/vectors_i8.bin" ] && \
     exit 0
 fi
 
-wget -q -O "$DATA_DIR/references.json.gz" "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/references.json.gz" 2>/dev/null
-wget -q -O "$DATA_DIR/normalization.json" "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/normalization.json" 2>/dev/null
-wget -q -O "$DATA_DIR/mcc_risk.json" "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/mcc_risk.json" 2>/dev/null
+wget -q -O "$DATA_DIR/references.json.gz" "$REFS_URL" 2>/dev/null
+wget -q -O "$DATA_DIR/normalization.json" "$NORMALIZATION_URL" 2>/dev/null
+wget -q -O "$DATA_DIR/mcc_risk.json" "$MCC_RISK_URL" 2>/dev/null
 gunzip -f "$DATA_DIR/references.json.gz"
 
 zig build-exe "$SCRIPT_DIR/vector_indexer.zig" -O ReleaseSmall -femit-bin="$SCRIPT_DIR/vector_indexer"

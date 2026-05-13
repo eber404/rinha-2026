@@ -19,10 +19,15 @@ if [ -f "$DATA_DIR/vectors_i8.bin" ] && \
 fi
 
 echo "=== Downloading reference files ==="
+
+: "${REFS_URL:?REFS_URL is required}"
+: "${NORMALIZATION_URL:?NORMALIZATION_URL is required}"
+: "${MCC_RISK_URL:?MCC_RISK_URL is required}"
+
 urls=(
-    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/references.json.gz"
-    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/normalization.json"
-    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/mcc_risk.json"
+    "$REFS_URL"
+    "$NORMALIZATION_URL"
+    "$MCC_RISK_URL"
 )
 
 for url in "${urls[@]}"; do

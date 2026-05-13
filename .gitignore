@@ -63,3 +63,7 @@ benchmarks
 
 # local generated dataset
 fraud-api/vector-index/references.json
+fraud-api/scripts/vector_indexer
+fraud-api/vector-index/*.bin
+fraud-api/vector-index/normalization.json
+fraud-api/vector-index/mcc_risk.json

@@ -4,6 +4,10 @@ services:
     container_name: preprocess
     working_dir: /workspace
     command: ["/workspace/fraud-api/scripts/preprocess-container.sh"]
+    environment:
+      - REFS_URL=${REFS_URL:?set REFS_URL}
+      - NORMALIZATION_URL=${NORMALIZATION_URL:?set NORMALIZATION_URL}
+      - MCC_RISK_URL=${MCC_RISK_URL:?set MCC_RISK_URL}
     volumes:
       - ./:/workspace
 
