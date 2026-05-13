@@ -16,7 +16,7 @@ pub const QueryVector = quantization.QueryVector;
 pub const VECTOR_DIM = 16;
 pub const K: u32 = 5;
 pub const NPROBE: u32 = 8;
-pub const TOTAL_SCAN_BUDGET: u32 = 20_000;
+pub const TOTAL_SCAN_BUDGET: u32 = 6_000;
 const STATS_SAMPLE_SHIFT: u6 = 6;
 const STATS_SAMPLE_RATE: u64 = @as(u64, 1) << STATS_SAMPLE_SHIFT;
 
@@ -26,11 +26,14 @@ const TopK = struct {
     count: u32,
 
     fn init() TopK {
-        return .{
-            .distances = [_]i32{0} ** K,
-            .indices = [_]u32{0} ** K,
+        var t = TopK{
+            .distances = undefined,
+            .indices = undefined,
             .count = 0,
         };
+        @memset(&t.distances, 0);
+        @memset(&t.indices, 0);
+        return t;
     }
 
     fn insert(t: *TopK, dist: i32, idx: u32) void {
@@ -241,7 +244,8 @@ pub const Scorer = struct {
 
         const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
         var top_k = TopK.init();
-        var cluster_contrib: [NPROBE]u32 = .{0} ** NPROBE;
+        var cluster_contrib: [NPROBE]u32 = undefined;
+        @memset(&cluster_contrib, 0);
 
         const pass1_budget = @as(u32, @intCast(@as(u64, TOTAL_SCAN_BUDGET) * 60 / 100));
         var remaining_budget: u32 = pass1_budget;

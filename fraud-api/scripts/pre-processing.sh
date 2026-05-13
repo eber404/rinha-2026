@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-DATA_DIR="$ROOT_DIR/fraud-engine/vector-index"
+DATA_DIR="$ROOT_DIR/fraud-api/vector-index"
+RESOURCES_DIR="$ROOT_DIR/.cache/rinha-official/resources"
 
 mkdir -p "$DATA_DIR"
 
@@ -18,18 +19,17 @@ if [ -f "$DATA_DIR/vectors_i8.bin" ] && \
     exit 0
 fi
 
-echo "=== Downloading reference files ==="
-urls=(
-    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/references.json.gz"
-    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/normalization.json"
-    "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/mcc_risk.json"
-)
+echo "=== Copying reference files from cache ==="
+if [ ! -f "$RESOURCES_DIR/references.json.gz" ] || \
+   [ ! -f "$RESOURCES_DIR/normalization.json" ] || \
+   [ ! -f "$RESOURCES_DIR/mcc_risk.json" ]; then
+    echo "Missing files in $RESOURCES_DIR"
+    exit 1
+fi
 
-for url in "${urls[@]}"; do
-    filename=$(basename "$url")
-    curl -sL -o "$DATA_DIR/$filename" "$url"
-    echo "Downloaded $filename"
-done
+cp "$RESOURCES_DIR/references.json.gz" "$DATA_DIR/references.json.gz"
+cp "$RESOURCES_DIR/normalization.json" "$DATA_DIR/normalization.json"
+cp "$RESOURCES_DIR/mcc_risk.json" "$DATA_DIR/mcc_risk.json"
 
 echo "=== Decompressing references ==="
 gunzip -f "$DATA_DIR/references.json.gz"

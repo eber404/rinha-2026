@@ -1,17 +1,8 @@
 const std = @import("std");
-const json = std.json;
 
 const DIMS: usize = 14;
 const PADDED_DIMS: usize = 16;
 const NUM_CLUSTERS: usize = 256;
-
-fn valueToF32(v: json.Value) f32 {
-    return switch (v) {
-        .float => |x| @as(f32, @floatCast(x)),
-        .integer => |x| @as(f32, @floatFromInt(x)),
-        else => 0.0,
-    };
-}
 
 fn quantizeSignedToByte(v: f32) u8 {
     var q: i32 = @intFromFloat(@round(v * 127.0));
@@ -28,9 +19,29 @@ fn writeU32Le(buf: []u8, value: u32) void {
     buf[3] = @as(u8, @intCast((value >> 24) & 0xff));
 }
 
+fn readToken(scanner: anytype) !std.json.Token {
+    return try scanner.next();
+}
+
+fn tokenNumberToF32(tok: std.json.Token, raw: []const u8) !f32 {
+    _ = raw;
+    return switch (tok) {
+        .number => |slice| try std.fmt.parseFloat(f32, slice),
+        else => error.InvalidNumber,
+    };
+}
+
+fn tokenString(tok: std.json.Token, raw: []const u8) ![]const u8 {
+    _ = raw;
+    return switch (tok) {
+        .string => |slice| slice,
+        else => error.InvalidString,
+    };
+}
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    const data_dir = "./fraud-engine/vector-index";
+    const data_dir = "./fraud-api/vector-index";
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -42,33 +53,60 @@ pub fn main(init: std.process.Init) !void {
         return err;
     };
 
-    const parsed = json.parseFromSlice([]json.Value, allocator, content, .{}) catch |err| {
-        std.debug.print("parse references failed: {}\n", .{err});
-        return err;
-    };
-    defer parsed.deinit();
+    var vectors_tmp = std.ArrayList(u8).initCapacity(allocator, 50_000 * PADDED_DIMS) catch return error.OutOfMemory;
+    var labels = std.ArrayList(u8).initCapacity(allocator, 50_000) catch return error.OutOfMemory;
 
-    const records = parsed.value;
-    const n = records.len;
-    if (n == 0) return;
+    var scanner = std.json.Scanner.initCompleteInput(allocator, content);
+    defer scanner.deinit();
 
-    var labels = try allocator.alloc(u8, n);
+    const first = try readToken(&scanner);
+    if (first != .array_begin) return error.InvalidJson;
 
-    for (records, 0..) |rec, i| {
-        const label = rec.object.get("label").?.string;
-        labels[i] = if (std.mem.eql(u8, label, "fraud")) 1 else 0;
-    }
+    while (true) {
+        const t = try readToken(&scanner);
+        if (t == .array_end) break;
+        if (t != .object_begin) return error.InvalidJson;
 
-    var vectors_tmp = try allocator.alloc(u8, n * PADDED_DIMS);
-    @memset(vectors_tmp, 0);
+        var vec14: [DIMS]u8 = undefined;
+        @memset(&vec14, 0);
+        var label: u8 = 0;
 
-    for (records, 0..) |rec, i| {
-        const vec = rec.object.get("vector").?.array.items;
-        const base = i * PADDED_DIMS;
-        for (0..DIMS) |d| {
-            vectors_tmp[base + d] = quantizeSignedToByte(valueToF32(vec[d]));
+        while (true) {
+            const k = try readToken(&scanner);
+            if (k == .object_end) break;
+            const key = try tokenString(k, content);
+
+            if (std.mem.eql(u8, key, "label")) {
+                const vtok = try readToken(&scanner);
+                const v = try tokenString(vtok, content);
+                label = if (std.mem.eql(u8, v, "fraud")) 1 else 0;
+            } else if (std.mem.eql(u8, key, "vector")) {
+                const arr = try readToken(&scanner);
+                if (arr != .array_begin) return error.InvalidJson;
+                var i: usize = 0;
+                while (true) {
+                    const vtok = try readToken(&scanner);
+                    if (vtok == .array_end) break;
+                    if (i < DIMS) {
+                        const fv = try tokenNumberToF32(vtok, content);
+                        vec14[i] = quantizeSignedToByte(fv);
+                    }
+                    i += 1;
+                }
+            } else {
+                _ = try readToken(&scanner);
+            }
         }
+
+        try labels.append(allocator, label);
+        const base = vectors_tmp.items.len;
+        try vectors_tmp.resize(allocator, base + PADDED_DIMS);
+        @memset(vectors_tmp.items[base .. base + PADDED_DIMS], 0);
+        @memcpy(vectors_tmp.items[base .. base + DIMS], vec14[0..]);
     }
+
+    const n = labels.items.len;
+    if (n == 0) return;
 
     var centroids_f32 = try allocator.alloc(f32, NUM_CLUSTERS * DIMS);
     var centroid_counts = try allocator.alloc(u32, NUM_CLUSTERS);
@@ -83,10 +121,12 @@ pub fn main(init: std.process.Init) !void {
         const c = i % NUM_CLUSTERS;
         centroid_counts[c] += 1;
 
-        const vec = records[idx].object.get("vector").?.array.items;
+        const base = idx * PADDED_DIMS;
         const centroid_base = c * DIMS;
         for (0..DIMS) |d| {
-            centroids_f32[centroid_base + d] += valueToF32(vec[d]);
+            const b = vectors_tmp.items[base + d];
+            const s: i8 = @bitCast(b);
+            centroids_f32[centroid_base + d] += @as(f32, @floatFromInt(s)) / 127.0;
         }
     }
 
@@ -94,9 +134,7 @@ pub fn main(init: std.process.Init) !void {
         if (centroid_counts[c] == 0) continue;
         const count_f: f32 = @floatFromInt(centroid_counts[c]);
         const centroid_base = c * DIMS;
-        for (0..DIMS) |d| {
-            centroids_f32[centroid_base + d] /= count_f;
-        }
+        for (0..DIMS) |d| centroids_f32[centroid_base + d] /= count_f;
     }
 
     var centroids_i8 = try allocator.alloc(u8, NUM_CLUSTERS * PADDED_DIMS);
@@ -122,12 +160,11 @@ pub fn main(init: std.process.Init) !void {
             const cbase = c * PADDED_DIMS;
             var dist: i64 = 0;
             for (0..PADDED_DIMS) |d| {
-                const v: i16 = @as(i8, @bitCast(vectors_tmp[vbase + d]));
+                const v: i16 = @as(i8, @bitCast(vectors_tmp.items[vbase + d]));
                 const k: i16 = @as(i8, @bitCast(centroids_i8[cbase + d]));
                 const diff = @as(i32, v) - @as(i32, k);
                 dist += @as(i64, diff * diff);
             }
-
             if (dist < best_dist) {
                 best_dist = dist;
                 best_cluster = c;
@@ -140,9 +177,7 @@ pub fn main(init: std.process.Init) !void {
 
     var cluster_offsets = try allocator.alloc(u32, NUM_CLUSTERS + 1);
     cluster_offsets[0] = 0;
-    for (0..NUM_CLUSTERS) |c| {
-        cluster_offsets[c + 1] = cluster_offsets[c] + cluster_counts[c];
-    }
+    for (0..NUM_CLUSTERS) |c| cluster_offsets[c + 1] = cluster_offsets[c] + cluster_counts[c];
 
     var write_pos = try allocator.alloc(u32, NUM_CLUSTERS);
     @memcpy(write_pos, cluster_offsets[0..NUM_CLUSTERS]);
@@ -157,8 +192,8 @@ pub fn main(init: std.process.Init) !void {
 
         const src_base = i * PADDED_DIMS;
         const dst_base = @as(usize, pos) * PADDED_DIMS;
-        @memcpy(vectors_out[dst_base .. dst_base + PADDED_DIMS], vectors_tmp[src_base .. src_base + PADDED_DIMS]);
-        labels_out[pos] = labels[i];
+        @memcpy(vectors_out[dst_base .. dst_base + PADDED_DIMS], vectors_tmp.items[src_base .. src_base + PADDED_DIMS]);
+        labels_out[pos] = labels.items[i];
     }
 
     const vectors_path = try std.fmt.allocPrint(allocator, "{s}/vectors_i8.bin", .{data_dir});

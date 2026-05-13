@@ -1,45 +1,56 @@
 services:
-  server-1: &server
-    container_name: server-1
+  preprocess:
+    image: ziglings/ziglang:latest
+    container_name: preprocess
+    working_dir: /workspace
+    command: ["/workspace/fraud-api/scripts/preprocess-container.sh"]
+    volumes:
+      - ./:/workspace
+
+  api-1: &api
+    container_name: api-1
     build:
       context: .
-      dockerfile: server/Dockerfile
+      dockerfile: fraud-api/Dockerfile
     volumes:
-      - ./fraud-engine/vector-index:/app/fraud-engine/vector-index:rw
+      - ./fraud-api/vector-index:/data/vector-index:rw
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
     restart: on-failure
+    depends_on:
+      preprocess:
+        condition: service_completed_successfully
     environment:
       - INSTANCE_ID=1
-      - MOCK_MODE=${MOCK_MODE:-}
+      - API_WORKERS=2
     deploy:
       resources:
         limits:
           cpus: '0.55'
           memory: '143MB'
 
-  server-2:
-    <<: *server
-    container_name: server-2
+  api-2:
+    <<: *api
+    container_name: api-2
     environment:
       - INSTANCE_ID=2
-      - MOCK_MODE=${MOCK_MODE:-}
+      - API_WORKERS=2
 
-  haproxy:
+  lb-zig:
     build:
       context: .
-      dockerfile: lb-c/Dockerfile
-    container_name: haproxy
+      dockerfile: lb-zig/Dockerfile
+    container_name: lb-zig
     ports:
       - '9999:9999'
     depends_on:
-      - server-1
-      - server-2
-    environment:
-      - LB_WORKERS=1
+      - api-1
+      - api-2
     volumes:
       - rinha-sockets:/tmp/rinha
+    security_opt:
+      - seccomp:unconfined
     deploy:
       resources:
         limits:

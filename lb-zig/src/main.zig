@@ -9,8 +9,8 @@ fn toFd(res: usize) !linux.fd_t {
     };
 }
 
-const MAX_CONN: usize = 131072;
-const READ_BUF: usize = 8192;
+const MAX_CONN: usize = 4096;
+const READ_BUF: usize = 2048;
 const CQE_BATCH: usize = 256;
 
 const Op = enum(u8) {
@@ -32,6 +32,7 @@ const Endpoint = struct {
 
 const Conn = struct {
     id: u32,
+    generation: u32 = 0,
     used: bool = false,
     backend_connecting: bool = false,
 
@@ -58,6 +59,7 @@ const State = struct {
     conns: []Conn,
     free_ids: []u32,
     free_top: usize = 0,
+    next_generation: u32 = 1,
 
     fn init(allocator: std.mem.Allocator, listener_fd: linux.fd_t, backend_paths: [2][]const u8, entries: u16) !State {
         var ring = try linux.IoUring.init(entries, 0);
@@ -92,8 +94,11 @@ const State = struct {
         self.allocator.free(self.free_ids);
     }
 
-    fn packUserData(op: Op, conn_id: u32) u64 {
-        return (@as(u64, @intFromEnum(op)) << 56) | @as(u64, conn_id);
+    fn packUserData(op: Op, conn_id: u32, generation: u32) u64 {
+        const op_bits = @as(u64, @intFromEnum(op)) << 56;
+        const gen_bits = @as(u64, generation) << 24;
+        const id_bits = @as(u64, conn_id & 0x00ff_ffff);
+        return op_bits | gen_bits | id_bits;
     }
 
     fn unpackOp(user_data: u64) Op {
@@ -101,7 +106,11 @@ const State = struct {
     }
 
     fn unpackConnId(user_data: u64) u32 {
-        return @as(u32, @truncate(user_data));
+        return @as(u32, @truncate(user_data & 0x00ff_ffff));
+    }
+
+    fn unpackGeneration(user_data: u64) u32 {
+        return @as(u32, @truncate((user_data >> 24) & 0xffff_ffff));
     }
 
     fn allocConn(self: *State) ?*Conn {
@@ -109,7 +118,9 @@ const State = struct {
         self.free_top -= 1;
         const id = self.free_ids[self.free_top];
         const c = &self.conns[id];
-        c.* = Conn{ .id = id, .used = true };
+        const gen = self.next_generation;
+        self.next_generation +%= 1;
+        c.* = Conn{ .id = id, .generation = gen, .used = true };
         return c;
     }
 
@@ -123,6 +134,11 @@ const State = struct {
         }
     }
 
+    fn freeConnWithReason(self: *State, c: *Conn, reason: []const u8) void {
+        _ = reason;
+        self.freeConn(c);
+    }
+
     fn backendIndex(self: *State) usize {
         const v = self.rr;
         self.rr +%= 1;
@@ -130,33 +146,33 @@ const State = struct {
     }
 
     fn submitAccept(self: *State) !void {
-        _ = try self.ring.accept(packUserData(.accept, 0), self.listener_fd, null, null, posix.SOCK.CLOEXEC);
+        _ = try self.ring.accept(packUserData(.accept, 0, 0), self.listener_fd, null, null, posix.SOCK.CLOEXEC);
     }
 
     fn submitRecvClient(self: *State, c: *Conn) !void {
         if (!c.client.read_open) return;
         if (c.to_backend_len != 0) return;
-        _ = try self.ring.recv(packUserData(.recv_client, c.id), c.client.fd, .{ .buffer = c.to_backend[0..] }, 0);
+        _ = try self.ring.recv(packUserData(.recv_client, c.id, c.generation), c.client.fd, .{ .buffer = c.to_backend[0..] }, 0);
     }
 
     fn submitSendBackend(self: *State, c: *Conn) !void {
         if (!c.backend.write_open) return;
         if (c.to_backend_len == 0) return;
         const buf = c.to_backend[c.to_backend_off .. c.to_backend_off + c.to_backend_len];
-        _ = try self.ring.send(packUserData(.send_backend, c.id), c.backend.fd, buf, 0);
+        _ = try self.ring.send(packUserData(.send_backend, c.id, c.generation), c.backend.fd, buf, 0);
     }
 
     fn submitRecvBackend(self: *State, c: *Conn) !void {
         if (!c.backend.read_open) return;
         if (c.to_client_len != 0) return;
-        _ = try self.ring.recv(packUserData(.recv_backend, c.id), c.backend.fd, .{ .buffer = c.to_client[0..] }, 0);
+        _ = try self.ring.recv(packUserData(.recv_backend, c.id, c.generation), c.backend.fd, .{ .buffer = c.to_client[0..] }, 0);
     }
 
     fn submitSendClient(self: *State, c: *Conn) !void {
         if (!c.client.write_open) return;
         if (c.to_client_len == 0) return;
         const buf = c.to_client[c.to_client_off .. c.to_client_off + c.to_client_len];
-        _ = try self.ring.send(packUserData(.send_client, c.id), c.client.fd, buf, 0);
+        _ = try self.ring.send(packUserData(.send_client, c.id, c.generation), c.client.fd, buf, 0);
     }
 
     fn submitConnectBackend(self: *State, c: *Conn) !void {
@@ -167,7 +183,7 @@ const State = struct {
         @memcpy(addr.path[0..p.len], p);
 
         _ = try self.ring.connect(
-            packUserData(.connect, c.id),
+            packUserData(.connect, c.id, c.generation),
             c.backend.fd,
             @ptrCast(&addr),
             @sizeOf(posix.sockaddr.un),
@@ -180,7 +196,9 @@ const State = struct {
 
     fn processAccept(self: *State, res: i32) !void {
         defer self.submitAccept() catch {};
-        if (res < 0) return;
+        if (res < 0) {
+            return;
+        }
 
         const cfd: linux.fd_t = @intCast(res);
         const c = self.allocConn() orelse {
@@ -189,21 +207,34 @@ const State = struct {
         };
         c.client.fd = cfd;
 
-        const bfd = try toFd(linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0));
+        const bfd = toFd(linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0)) catch {
+            _ = linux.close(cfd);
+            self.freeConnWithReason(c, "backend_socket_failed");
+            return;
+        };
         c.backend.fd = bfd;
         c.backend_connecting = true;
 
-        try self.submitConnectBackend(c);
+        self.submitConnectBackend(c) catch {
+            self.freeConnWithReason(c, "submit_connect_failed");
+            return;
+        };
     }
 
     fn processConnect(self: *State, c: *Conn, res: i32) !void {
         if (res < 0) {
-            self.freeConn(c);
+            self.freeConnWithReason(c, "connect_cqe_error");
             return;
         }
         c.backend_connecting = false;
-        try self.submitRecvClient(c);
-        try self.submitRecvBackend(c);
+        self.submitRecvClient(c) catch {
+            self.freeConnWithReason(c, "submit_recv_client_failed_after_connect");
+            return;
+        };
+        self.submitRecvBackend(c) catch {
+            self.freeConnWithReason(c, "submit_recv_backend_failed_after_connect");
+            return;
+        };
     }
 
     fn processRecvClient(self: *State, c: *Conn, res: i32) !void {
@@ -216,18 +247,21 @@ const State = struct {
             return;
         }
         if (res < 0) {
-            self.freeConn(c);
+            self.freeConnWithReason(c, "recv_client_cqe_error");
             return;
         }
 
         c.to_backend_off = 0;
         c.to_backend_len = @as(usize, @intCast(res));
-        try self.submitSendBackend(c);
+        self.submitSendBackend(c) catch {
+            self.freeConnWithReason(c, "submit_send_backend_failed");
+            return;
+        };
     }
 
     fn processSendBackend(self: *State, c: *Conn, res: i32) !void {
         if (res < 0) {
-            self.freeConn(c);
+            self.freeConnWithReason(c, "send_backend_cqe_error");
             return;
         }
         const n = @as(usize, @intCast(res));
@@ -238,12 +272,18 @@ const State = struct {
                 halfCloseWrite(c.backend.fd);
                 c.backend.write_open = false;
             }
-            try self.submitRecvClient(c);
+            self.submitRecvClient(c) catch {
+                self.freeConnWithReason(c, "submit_recv_client_failed_after_send_backend");
+                return;
+            };
             return;
         }
         c.to_backend_off += n;
         c.to_backend_len -= n;
-        try self.submitSendBackend(c);
+        self.submitSendBackend(c) catch {
+            self.freeConnWithReason(c, "submit_send_backend_failed_partial");
+            return;
+        };
     }
 
     fn processRecvBackend(self: *State, c: *Conn, res: i32) !void {
@@ -253,24 +293,28 @@ const State = struct {
                 halfCloseWrite(c.client.fd);
                 c.client.write_open = false;
             }
-            if (!c.client.read_open and !c.backend.read_open and c.to_client_len == 0 and c.to_backend_len == 0) {
-                self.freeConn(c);
+            if (!c.backend.read_open and c.to_client_len == 0 and c.to_backend_len == 0) {
+                c.client.read_open = false;
+                self.freeConnWithReason(c, "backend_eof_response_drained");
             }
             return;
         }
         if (res < 0) {
-            self.freeConn(c);
+            self.freeConnWithReason(c, "recv_backend_cqe_error");
             return;
         }
 
         c.to_client_off = 0;
         c.to_client_len = @as(usize, @intCast(res));
-        try self.submitSendClient(c);
+        self.submitSendClient(c) catch {
+            self.freeConnWithReason(c, "submit_send_client_failed");
+            return;
+        };
     }
 
     fn processSendClient(self: *State, c: *Conn, res: i32) !void {
         if (res < 0) {
-            self.freeConn(c);
+            self.freeConnWithReason(c, "send_client_cqe_error");
             return;
         }
         const n = @as(usize, @intCast(res));
@@ -281,16 +325,23 @@ const State = struct {
                 halfCloseWrite(c.client.fd);
                 c.client.write_open = false;
             }
-            if (!c.client.read_open and !c.backend.read_open and c.to_client_len == 0 and c.to_backend_len == 0) {
-                self.freeConn(c);
+            if (!c.backend.read_open and c.to_client_len == 0 and c.to_backend_len == 0) {
+                c.client.read_open = false;
+                self.freeConnWithReason(c, "send_client_drained_backend_closed");
                 return;
             }
-            try self.submitRecvBackend(c);
+            self.submitRecvBackend(c) catch {
+                self.freeConnWithReason(c, "submit_recv_backend_failed_after_send_client");
+                return;
+            };
             return;
         }
         c.to_client_off += n;
         c.to_client_len -= n;
-        try self.submitSendClient(c);
+        self.submitSendClient(c) catch {
+            self.freeConnWithReason(c, "submit_send_client_failed_partial");
+            return;
+        };
     }
 
     fn run(self: *State) !void {
@@ -305,6 +356,7 @@ const State = struct {
             for (cqes[0..count]) |cqe| {
                 const op = unpackOp(cqe.user_data);
                 const conn_id = unpackConnId(cqe.user_data);
+                const generation = unpackGeneration(cqe.user_data);
                 const res = cqe.res;
 
                 switch (op) {
@@ -313,6 +365,7 @@ const State = struct {
                         if (conn_id >= MAX_CONN) continue;
                         const c = &self.conns[conn_id];
                         if (!c.used) continue;
+                        if (c.generation != generation) continue;
 
                         switch (op) {
                             .connect => try self.processConnect(c, res),
@@ -335,9 +388,11 @@ const State = struct {
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
     const port: u16 = 9999;
-    const ring_entries: u16 = 4096;
+    const ring_entries: u16 = 8192;
     const b1 = "/tmp/rinha/api-1.sock";
     const b2 = "/tmp/rinha/api-2.sock";
+
+    posix.setrlimit(.NOFILE, .{ .cur = 65_535, .max = 65_535 }) catch {};
 
     const listener_fd = try toFd(linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0));
     defer _ = linux.close(listener_fd);

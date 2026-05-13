@@ -46,7 +46,7 @@ pub const Dataset = struct {
     scales_mmap: []align(PAGE_SIZE) const u8 = &.{},
     offsets_mmap: []align(PAGE_SIZE) const u8 = &.{},
 
-    cluster_offsets_cache: [257]u32 = [_]u32{0} ** 257,
+    cluster_offsets_cache: [257]u32 = std.mem.zeroes([257]u32),
     cluster_count: u32 = 0,
 
     pub fn init() Dataset {
