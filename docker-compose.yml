@@ -9,10 +9,16 @@ services:
 
   api-1: &api
     container_name: api-1
-    build:
-      context: .
-      dockerfile: fraud-api/Dockerfile
+    image: ziglings/ziglang:latest
+    working_dir: /workspace
+    command:
+      - sh
+      - -lc
+      - >-
+        zig build-exe fraud-api/src/main.zig -O ReleaseFast -target x86_64-linux-musl -femit-bin=/tmp/fraud-api &&
+        exec /tmp/fraud-api
     volumes:
+      - ./:/workspace
       - ./fraud-api/vector-index:/data/vector-index:rw
       - rinha-sockets:/tmp/rinha
     networks:
@@ -38,16 +44,22 @@ services:
       - API_WORKERS=2
 
   lb-zig:
-    build:
-      context: .
-      dockerfile: lb-zig/Dockerfile
+    image: ziglings/ziglang:latest
     container_name: lb-zig
+    working_dir: /workspace
+    command:
+      - sh
+      - -lc
+      - >-
+        zig build-exe lb-zig/src/main.zig -O ReleaseFast -target x86_64-linux-musl -femit-bin=/tmp/lb-zig &&
+        exec /tmp/lb-zig
     ports:
       - '9999:9999'
     depends_on:
       - api-1
       - api-2
     volumes:
+      - ./:/workspace
       - rinha-sockets:/tmp/rinha
     security_opt:
       - seccomp:unconfined

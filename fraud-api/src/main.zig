@@ -7,6 +7,7 @@ const quantization = @import("quantization.zig");
 
 const MAX_REQ = 64 * 1024;
 const MAX_WORKERS: usize = 8;
+const APPROVAL_THRESHOLD: f32 = 0.6;
 
 fn statusLine(code: u16) []const u8 {
     return switch (code) {
@@ -133,7 +134,7 @@ fn handleConn(fd: linux.fd_t, scorer: *scorer_mod.Scorer) void {
     const features = payload.parsePayload(body);
     const q = quantization.quantize(&features);
     const score = scorer.score(&q);
-    const approved = score < 0.5;
+    const approved = score < APPROVAL_THRESHOLD;
 
     var out: [128]u8 = undefined;
     const json = std.fmt.bufPrint(&out, "{{\"approved\":{s},\"fraud_score\":{d:.6}}}", .{ if (approved) "true" else "false", score }) catch {
