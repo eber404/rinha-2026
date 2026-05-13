@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -18,7 +21,29 @@ import (
 type app struct {
 	instanceID string
 	ready      bool
+	mockFixed  bool
+	tracePct   int
 	metrics    *metrics
+}
+
+type config struct {
+	mockFixedResponse bool
+	traceSamplePct    int
+}
+
+type requestTrace struct {
+	Kind      string `json:"kind"`
+	ReqID     string `json:"req_id"`
+	Instance  string `json:"instance"`
+	Status    int    `json:"status"`
+	ReadUs    int64  `json:"t_read_us"`
+	ParseUs   int64  `json:"t_parse_us"`
+	EvalUs    int64  `json:"t_eval_us"`
+	RespUs    int64  `json:"t_resp_us"`
+	TotalUs   int64  `json:"t_total_us"`
+	ParseErr  bool   `json:"parse_err"`
+	EvalErr   bool   `json:"eval_err"`
+	MockMode  bool   `json:"mock_mode"`
 }
 
 type metrics struct {
@@ -38,18 +63,24 @@ type metrics struct {
 }
 
 func main() {
+	cfg := loadConfigFromEnv()
 	instanceID := os.Getenv("INSTANCE_ID")
 	if instanceID == "" {
 		instanceID = "1"
 	}
 
-	a := &app{instanceID: instanceID, metrics: &metrics{}}
-	if err := zigcore.Init("/app/fraud-engine/vector-index"); err != nil {
+	a := &app{instanceID: instanceID, metrics: &metrics{}, mockFixed: cfg.mockFixedResponse, tracePct: cfg.traceSamplePct}
+	if a.mockFixed {
+		a.ready = true
+		log.Printf("instance=%s mock mode enabled (fixed response)", instanceID)
+	} else if err := zigcore.Init("/app/fraud-engine/vector-index"); err != nil {
 		log.Printf("zig init failed: %v", err)
 	} else {
 		a.ready = true
 	}
-	defer zigcore.Shutdown()
+	if !a.mockFixed {
+		defer zigcore.Shutdown()
+	}
 	go a.reportMetrics()
 
 	socketPath := fmt.Sprintf("/tmp/rinha/api-%s.sock", instanceID)
@@ -100,33 +131,69 @@ func (a *app) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
+	status := http.StatusOK
+	var parseErr bool
+	var evalErr bool
+	var readDurUs int64
+	var parseDurUs int64
+	var evalDurUs int64
+	var respDurUs int64
+	reqID := r.Header.Get("X-Req-Id")
+	if reqID == "" {
+		reqID = fmt.Sprintf("%s-%d", a.instanceID, started.UnixNano())
+	}
 	a.metrics.requestsTotal.Add(1)
 	if r.Method != http.MethodPost {
 		a.metrics.status405.Add(1)
+		status = http.StatusMethodNotAllowed
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 		return
 	}
 	if !a.ready {
 		a.metrics.status503.Add(1)
+		status = http.StatusServiceUnavailable
 		w.WriteHeader(http.StatusServiceUnavailable)
+		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 		return
 	}
-	parseStart := time.Now()
+	readStart := time.Now()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	readDurUs = time.Since(readStart).Microseconds()
 	if err != nil {
 		a.metrics.readErrors.Add(1)
 		a.metrics.status400.Add(1)
+		status = http.StatusBadRequest
 		w.WriteHeader(http.StatusBadRequest)
 		a.sampleErrorLog("read_body", err, nil)
+		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 		return
 	}
+	parseStart := time.Now()
 	f, err := payload.Parse(body)
 	a.metrics.parseTotalNs.Add(time.Since(parseStart).Nanoseconds())
+	parseDurUs = time.Since(parseStart).Microseconds()
 	if err != nil {
+		parseErr = true
 		a.metrics.parseErrors.Add(1)
 		a.metrics.status400.Add(1)
+		status = http.StatusBadRequest
 		w.WriteHeader(http.StatusBadRequest)
 		a.sampleErrorLog("parse_payload", err, body)
+		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
+		return
+	}
+
+	if a.mockFixed {
+		respStart := time.Now()
+		res := buildResponse(true, 0.01, a.instanceID)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res)))
+		_, _ = w.Write(res)
+		respDurUs = time.Since(respStart).Microseconds()
+		a.metrics.status200.Add(1)
+		a.metrics.latencyTotalNs.Add(time.Since(started).Nanoseconds())
+		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 		return
 	}
 
@@ -152,21 +219,28 @@ func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
 		HasLastTransaction:       boolToU8(f.HasLastTransaction),
 	})
 	a.metrics.evalTotalNs.Add(time.Since(evalStart).Nanoseconds())
+	evalDurUs = time.Since(evalStart).Microseconds()
 	if err != nil {
+		evalErr = true
 		a.metrics.evalErrors.Add(1)
 		a.metrics.status503.Add(1)
+		status = http.StatusServiceUnavailable
 		w.WriteHeader(http.StatusServiceUnavailable)
 		a.sampleErrorLog("zig_eval", err, nil)
+		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 		return
 	}
 
 	approved := score < 0.6
+	respStart := time.Now()
 	res := buildResponse(approved, score, a.instanceID)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res)))
 	_, _ = w.Write(res)
+	respDurUs = time.Since(respStart).Microseconds()
 	a.metrics.status200.Add(1)
 	a.metrics.latencyTotalNs.Add(time.Since(started).Nanoseconds())
+	a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 }
 
 func (a *app) sampleErrorLog(kind string, err error, body []byte) {
@@ -257,6 +331,59 @@ func boolToU8(v bool) uint8 {
 		return 1
 	}
 	return 0
+}
+
+func loadConfigFromEnv() config {
+	tracePct := 5
+	if raw := os.Getenv("TRACE_SAMPLE_PCT"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			if n < 0 {
+				n = 0
+			}
+			if n > 100 {
+				n = 100
+			}
+			tracePct = n
+		}
+	}
+	return config{mockFixedResponse: os.Getenv("MOCK_MODE") == "fixed", traceSamplePct: tracePct}
+}
+
+func (a *app) shouldTrace(reqID string) bool {
+	if a.tracePct <= 0 {
+		return false
+	}
+	if a.tracePct >= 100 {
+		return true
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(reqID))
+	return int(h.Sum32()%100) < a.tracePct
+}
+
+func (a *app) maybeTrace(reqID string, status int, readDurUs int64, parseDurUs int64, evalDurUs int64, respDurUs int64, started time.Time, parseErr bool, evalErr bool) {
+	if !a.shouldTrace(reqID) {
+		return
+	}
+	t := requestTrace{
+		Kind:     "req_trace",
+		ReqID:    reqID,
+		Instance: a.instanceID,
+		Status:   status,
+		ReadUs:   readDurUs,
+		ParseUs:  parseDurUs,
+		EvalUs:   evalDurUs,
+		RespUs:   respDurUs,
+		TotalUs:  time.Since(started).Microseconds(),
+		ParseErr: parseErr,
+		EvalErr:  evalErr,
+		MockMode: a.mockFixed,
+	}
+	b, err := json.Marshal(t)
+	if err != nil {
+		return
+	}
+	log.Print(string(b))
 }
 
 func buildResponse(approved bool, score float32, instance string) []byte {
