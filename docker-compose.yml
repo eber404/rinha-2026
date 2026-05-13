@@ -1,9 +1,9 @@
 services:
-  server-1: &server
-    container_name: server-1
+  api-1: &api
+    container_name: api-1
     build:
       context: .
-      dockerfile: server/Dockerfile
+      dockerfile: api/Dockerfile
     volumes:
       - ./fraud-engine/vector-index:/app/fraud-engine/vector-index:rw
       - rinha-sockets:/tmp/rinha
@@ -19,43 +19,23 @@ services:
           cpus: '0.55'
           memory: '143MB'
 
-  server-2:
-    <<: *server
-    container_name: server-2
+  api-2:
+    <<: *api
+    container_name: api-2
     environment:
       - INSTANCE_ID=2
       - MOCK_MODE=${MOCK_MODE:-}
 
-  # haproxy:
-  #   build:
-  #     context: .
-  #     dockerfile: lb-c/Dockerfile
-  #   container_name: haproxy
-  #   ports:
-  #     - '9999:9999'
-  #   depends_on:
-  #     - server-1
-  #     - server-2
-  #   environment:
-  #     - LB_WORKERS=1
-  #   volumes:
-  #     - rinha-sockets:/tmp/rinha
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         cpus: '0.40'
-  #         memory: '64MB'
-
-  lb-zig-uring:
+  lb-zig:
     build:
       context: .
-      dockerfile: lb-zig-uring/Dockerfile
-    container_name: lb-zig-uring
+      dockerfile: lb-zig/Dockerfile
+    container_name: lb-zig
     ports:
       - '9999:9999'
     depends_on:
-      - server-1
-      - server-2
+      - api-1
+      - api-2
     volumes:
       - rinha-sockets:/tmp/rinha
     security_opt:
