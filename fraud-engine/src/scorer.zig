@@ -35,24 +35,26 @@ const TopK = struct {
 
     fn insert(t: *TopK, dist: i32, idx: u32) void {
         if (t.count < K) {
-            t.distances[t.count] = dist;
-            t.indices[t.count] = idx;
+            var pos = t.count;
+            while (pos > 0 and dist < t.distances[pos - 1]) : (pos -= 1) {
+                t.distances[pos] = t.distances[pos - 1];
+                t.indices[pos] = t.indices[pos - 1];
+            }
+            t.distances[pos] = dist;
+            t.indices[pos] = idx;
             t.count += 1;
-        } else {
-            var worst_idx: u32 = 0;
-            var worst_dist: i32 = t.distances[0];
-            var i: u32 = 1;
-            while (i < K) : (i += 1) {
-                if (t.distances[i] > worst_dist) {
-                    worst_dist = t.distances[i];
-                    worst_idx = i;
-                }
-            }
-            if (dist < worst_dist) {
-                t.distances[worst_idx] = dist;
-                t.indices[worst_idx] = idx;
-            }
+            return;
         }
+
+        if (dist >= t.distances[K - 1]) return;
+
+        var pos: u32 = K - 1;
+        while (pos > 0 and dist < t.distances[pos - 1]) : (pos -= 1) {
+            t.distances[pos] = t.distances[pos - 1];
+            t.indices[pos] = t.indices[pos - 1];
+        }
+        t.distances[pos] = dist;
+        t.indices[pos] = idx;
     }
 
     fn insertUnique(t: *TopK, dist: i32, idx: u32) void {
@@ -336,6 +338,25 @@ test "topk insertUnique ignores duplicate indices" {
     topk.insertUnique(20, 10);
     try std.testing.expectEqual(@as(u32, 1), topk.count);
     try std.testing.expectEqual(@as(i32, 40), topk.distances[0]);
+}
+
+test "topk keeps sorted best distances" {
+    var topk = TopK.init();
+    topk.insert(30, 1);
+    topk.insert(10, 2);
+    topk.insert(20, 3);
+    try std.testing.expectEqual(@as(i32, 10), topk.distances[0]);
+    try std.testing.expectEqual(@as(i32, 20), topk.distances[1]);
+    try std.testing.expectEqual(@as(i32, 30), topk.distances[2]);
+
+    topk.insert(40, 4);
+    topk.insert(50, 5);
+    topk.insert(25, 6);
+    try std.testing.expectEqual(@as(i32, 10), topk.distances[0]);
+    try std.testing.expectEqual(@as(i32, 20), topk.distances[1]);
+    try std.testing.expectEqual(@as(i32, 25), topk.distances[2]);
+    try std.testing.expectEqual(@as(i32, 30), topk.distances[3]);
+    try std.testing.expectEqual(@as(i32, 40), topk.distances[4]);
 }
 
 test "shouldSampleStats samples each 64 requests" {
