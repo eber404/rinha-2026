@@ -2,7 +2,7 @@
 
 OFFICIAL_REPO_DIR := .cache/rinha-official
 OFFICIAL_REPO_URL := https://github.com/zanfranceschi/rinha-de-backend-2026
-BENCHMARK_FILE := shared/benchmarks/$(shell date +%Y-%m-%d-%H%M%S).json
+BENCHMARK_FILE := .benchmarks/$(shell date +%Y-%m-%d-%H%M%S).json
 
 UID := $(shell id -u)
 GID := $(shell id -g)
@@ -44,7 +44,7 @@ clean:
 	@rm -rf load-balancer/zig-out fraud-api/zig-out
 
 benchmark:
-	@mkdir -p .cache shared/benchmarks
+	@mkdir -p .cache .benchmarks
 	@if [ ! -d "$(OFFICIAL_REPO_DIR)/.git" ]; then \
 		git clone --depth 1 "$(OFFICIAL_REPO_URL)" "$(OFFICIAL_REPO_DIR)"; \
 	else \

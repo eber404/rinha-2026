@@ -4,12 +4,16 @@ set -eu
 ROOT_DIR="/workspace"
 DATA_DIR="$ROOT_DIR/fraud-api/vector-index"
 SCRIPT_DIR="$ROOT_DIR/fraud-api/scripts"
+RESOURCES_DIR="$ROOT_DIR/.cache/rinha-official/resources"
 
 mkdir -p "$DATA_DIR"
 
-: "${REFS_URL:?REFS_URL is required}"
-: "${NORMALIZATION_URL:?NORMALIZATION_URL is required}"
-: "${MCC_RISK_URL:?MCC_RISK_URL is required}"
+if [ ! -f "$RESOURCES_DIR/references.json.gz" ] || \
+   [ ! -f "$RESOURCES_DIR/normalization.json" ] || \
+   [ ! -f "$RESOURCES_DIR/mcc_risk.json" ]; then
+    echo "Missing files in $RESOURCES_DIR"
+    exit 1
+fi
 
 if [ -f "$DATA_DIR/vectors_i8.bin" ] && \
    [ -f "$DATA_DIR/labels.bin" ] && \
@@ -21,9 +25,9 @@ if [ -f "$DATA_DIR/vectors_i8.bin" ] && \
     exit 0
 fi
 
-wget -q -O "$DATA_DIR/references.json.gz" "$REFS_URL" 2>/dev/null
-wget -q -O "$DATA_DIR/normalization.json" "$NORMALIZATION_URL" 2>/dev/null
-wget -q -O "$DATA_DIR/mcc_risk.json" "$MCC_RISK_URL" 2>/dev/null
+cp "$RESOURCES_DIR/references.json.gz" "$DATA_DIR/references.json.gz"
+cp "$RESOURCES_DIR/normalization.json" "$DATA_DIR/normalization.json"
+cp "$RESOURCES_DIR/mcc_risk.json" "$DATA_DIR/mcc_risk.json"
 gunzip -f "$DATA_DIR/references.json.gz"
 
 zig build-exe "$SCRIPT_DIR/vector_indexer.zig" -O ReleaseSmall -femit-bin="$SCRIPT_DIR/vector_indexer"
