@@ -16,7 +16,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.15'
+          cpus: '0.55'
           memory: '143MB'
 
   server-2:
@@ -29,7 +29,7 @@ services:
   haproxy:
     build:
       context: .
-      dockerfile: lb-zig-uring/Dockerfile
+      dockerfile: lb-c/Dockerfile
     container_name: haproxy
     ports:
       - '9999:9999'
@@ -37,16 +37,13 @@ services:
       - server-1
       - server-2
     environment:
-      - LB_PORT=9999
-      - LB_BACKEND_1=/tmp/rinha/api-1.sock
-      - LB_BACKEND_2=/tmp/rinha/api-2.sock
-      - LB_RING_ENTRIES=4096
+      - LB_WORKERS=1
     volumes:
       - rinha-sockets:/tmp/rinha
     deploy:
       resources:
         limits:
-          cpus: '1.20'
+          cpus: '0.40'
           memory: '64MB'
 
 networks:

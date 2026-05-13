@@ -22,6 +22,8 @@ type app struct {
 	instanceID string
 	ready      bool
 	mockFixed  bool
+	mockResp   []byte
+	mockLen    string
 	tracePct   int
 	metrics    *metrics
 }
@@ -71,6 +73,8 @@ func main() {
 
 	a := &app{instanceID: instanceID, metrics: &metrics{}, mockFixed: cfg.mockFixedResponse, tracePct: cfg.traceSamplePct}
 	if a.mockFixed {
+		a.mockResp = buildResponse(true, 0.01, instanceID)
+		a.mockLen = strconv.Itoa(len(a.mockResp))
 		a.ready = true
 		log.Printf("instance=%s mock mode enabled (fixed response)", instanceID)
 	} else if err := zigcore.Init("/app/fraud-engine/vector-index"); err != nil {
@@ -163,10 +167,9 @@ func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 4<<10))
 		readDurUs = time.Since(readStart).Microseconds()
 		respStart := time.Now()
-		res := buildResponse(true, 0.01, a.instanceID)
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res)))
-		_, _ = w.Write(res)
+		w.Header().Set("Content-Length", a.mockLen)
+		_, _ = w.Write(a.mockResp)
 		respDurUs = time.Since(respStart).Microseconds()
 		a.metrics.status200.Add(1)
 		a.metrics.latencyTotalNs.Add(time.Since(started).Nanoseconds())
