@@ -8,7 +8,7 @@ RUN curl -L -o /tmp/zig.tar.xz https://ziglang.org/download/0.16.0/zig-x86_64-li
     rm /tmp/zig.tar.xz
 
 WORKDIR /src
-COPY lb-zig-uring/src ./src
+COPY lb-zig/src ./src
 RUN mkdir -p /out && zig build-exe src/main.zig -O ReleaseFast -target x86_64-linux-gnu -femit-bin=/out/lb-zig
 
 FROM ubuntu:24.04
