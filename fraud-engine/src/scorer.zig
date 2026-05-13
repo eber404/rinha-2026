@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const quantization = @import("quantization.zig");
 const dataset = @import("dataset.zig");
 
@@ -114,6 +115,76 @@ inline fn shouldSampleStats(req_num: u64) bool {
     return (req_num & (STATS_SAMPLE_RATE - 1)) == 0;
 }
 
+fn perfTestsEnabled() bool {
+    const raw = getPerfEnv("RUN_PERF_TESTS") orelse return false;
+    return std.mem.eql(u8, raw, "1") or std.ascii.eqlIgnoreCase(raw, "true") or std.ascii.eqlIgnoreCase(raw, "yes");
+}
+
+fn getPerfEnv(name: []const u8) ?[]const u8 {
+    if (!builtin.is_test) return null;
+    const raw = std.process.Environ.getPosix(std.testing.environ, name) orelse return null;
+    return raw;
+}
+
+fn parseEnvU64(name: []const u8, default_value: u64) u64 {
+    const raw = getPerfEnv(name) orelse return default_value;
+    return std.fmt.parseInt(u64, raw, 10) catch default_value;
+}
+
+fn monotonicNowNs() u64 {
+    var ts: std.os.linux.timespec = undefined;
+    if (std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts) != 0) return 0;
+    const sec = @as(u64, @intCast(ts.sec));
+    const nsec = @as(u64, @intCast(ts.nsec));
+    return sec * std.time.ns_per_s + nsec;
+}
+
+fn runScorePerfGate() !void {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const warmup_iters = @max(parseEnvU64("PERF_WARMUP_ITERS", 5_000), 1);
+    const iters = @max(parseEnvU64("PERF_ITERS", 20_000), 1);
+    const max_ns = @max(parseEnvU64("PERF_MAX_NS", 3_500), 1);
+
+    const data_dir = if (getPerfEnv("PERF_DATA_DIR")) |dir|
+        dir
+    else
+        "fraud-engine/vector-index";
+
+    var ds = dataset.Dataset.init();
+    defer ds.deinit();
+    try ds.load(data_dir);
+
+    var scorer_instance = Scorer.init(&ds);
+    const query: QueryVector = .{ 7, -4, 31, -16, 22, 8, -11, 3, 9, -2, 5, 1, -7, 13, -19, 27 };
+
+    var sink: f32 = 0.0;
+
+    var i: u64 = 0;
+    while (i < warmup_iters) : (i += 1) {
+        sink += scorer_instance.score(&query);
+    }
+
+    const start_ns = monotonicNowNs();
+    i = 0;
+    while (i < iters) : (i += 1) {
+        sink += scorer_instance.score(&query);
+    }
+
+    const end_ns = monotonicNowNs();
+    if (end_ns <= start_ns) return error.SkipZigTest;
+    const elapsed_ns = end_ns - start_ns;
+    const ns_per_op = elapsed_ns / iters;
+
+    std.debug.print(
+        "perf(score): ns/op={d} max={d} iters={d} warmup={d} sink={d}\n",
+        .{ ns_per_op, max_ns, iters, warmup_iters, sink },
+    );
+
+    try std.testing.expect(ns_per_op <= max_ns);
+    try std.testing.expect(!std.math.isNan(sink));
+}
+
 pub const Scorer = struct {
     dataset: *dataset.Dataset,
     n_clusters: u32,
@@ -134,33 +205,44 @@ pub const Scorer = struct {
 
         if (s.n_clusters == 0 or nprobe == 0) return result;
 
-        var centroid_dists: [256]i32 = undefined;
-        @memset(&centroid_dists, 0);
-
         const clusters_to_scan = @min(s.n_clusters, 256);
+        const nprobe_count: usize = @intCast(@min(nprobe, s.n_clusters));
+        var best_indices: [NPROBE]u32 = undefined;
+        var best_dists: [NPROBE]i32 = undefined;
+        @memset(&best_indices, 0);
+        for (0..NPROBE) |k| best_dists[k] = std.math.maxInt(i32);
+
+        var best_count: usize = 0;
         var i: u32 = 0;
         while (i < clusters_to_scan) : (i += 1) {
             const c = s.dataset.centroidAt(i);
-            centroid_dists[i] = distance(query, &c);
+            const dist = distance(query, &c);
+
+            if (best_count < nprobe_count) {
+                var pos = best_count;
+                while (pos > 0 and dist < best_dists[pos - 1]) : (pos -= 1) {
+                    best_dists[pos] = best_dists[pos - 1];
+                    best_indices[pos] = best_indices[pos - 1];
+                }
+                best_dists[pos] = dist;
+                best_indices[pos] = i;
+                best_count += 1;
+                continue;
+            }
+
+            if (nprobe_count == 0 or dist >= best_dists[nprobe_count - 1]) continue;
+
+            var pos = nprobe_count - 1;
+            while (pos > 0 and dist < best_dists[pos - 1]) : (pos -= 1) {
+                best_dists[pos] = best_dists[pos - 1];
+                best_indices[pos] = best_indices[pos - 1];
+            }
+            best_dists[pos] = dist;
+            best_indices[pos] = i;
         }
 
-        var selected: [256]bool = undefined;
-        for (0..256) |sel_i| selected[sel_i] = false;
-
-        const nprobe_count = @min(nprobe, s.n_clusters);
-        var probe_i: u32 = 0;
-        while (probe_i < nprobe_count) : (probe_i += 1) {
-            var best_idx: u32 = 0;
-            var best_dist: i32 = std.math.maxInt(i32);
-            var j: u32 = 0;
-            while (j < clusters_to_scan) : (j += 1) {
-                if (!selected[j] and centroid_dists[j] < best_dist) {
-                    best_dist = centroid_dists[j];
-                    best_idx = j;
-                }
-            }
-            result[probe_i] = best_idx;
-            selected[best_idx] = true;
+        for (0..nprobe_count) |k| {
+            result[k] = best_indices[k];
         }
 
         return result;
@@ -280,4 +362,9 @@ test "shouldSampleStats samples each 64 requests" {
     try std.testing.expect(!shouldSampleStats(63));
     try std.testing.expect(shouldSampleStats(64));
     try std.testing.expect(shouldSampleStats(128));
+}
+
+test "score hot path performance gate" {
+    if (!perfTestsEnabled()) return error.SkipZigTest;
+    try runScorePerfGate();
 }

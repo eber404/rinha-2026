@@ -16,7 +16,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.55'
+          cpus: '0.15'
           memory: '143MB'
 
   server-2:
@@ -27,21 +27,26 @@ services:
       - MOCK_MODE=${MOCK_MODE:-}
 
   haproxy:
-    image: haproxy:lts-alpine
+    build:
+      context: .
+      dockerfile: lb-zig-uring/Dockerfile
     container_name: haproxy
-    user: '0:0'
     ports:
       - '9999:9999'
     depends_on:
       - server-1
       - server-2
+    environment:
+      - LB_PORT=9999
+      - LB_BACKEND_1=/tmp/rinha/api-1.sock
+      - LB_BACKEND_2=/tmp/rinha/api-2.sock
+      - LB_RING_ENTRIES=4096
     volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - rinha-sockets:/tmp/rinha
     deploy:
       resources:
         limits:
-          cpus: '0.40'
+          cpus: '1.20'
           memory: '64MB'
 
 networks:

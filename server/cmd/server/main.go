@@ -157,6 +157,22 @@ func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
 		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 		return
 	}
+
+	if a.mockFixed {
+		readStart := time.Now()
+		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 4<<10))
+		readDurUs = time.Since(readStart).Microseconds()
+		respStart := time.Now()
+		res := buildResponse(true, 0.01, a.instanceID)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res)))
+		_, _ = w.Write(res)
+		respDurUs = time.Since(respStart).Microseconds()
+		a.metrics.status200.Add(1)
+		a.metrics.latencyTotalNs.Add(time.Since(started).Nanoseconds())
+		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
+		return
+	}
 	readStart := time.Now()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
 	readDurUs = time.Since(readStart).Microseconds()
@@ -180,19 +196,6 @@ func (a *app) handleFraudScore(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusBadRequest
 		w.WriteHeader(http.StatusBadRequest)
 		a.sampleErrorLog("parse_payload", err, body)
-		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
-		return
-	}
-
-	if a.mockFixed {
-		respStart := time.Now()
-		res := buildResponse(true, 0.01, a.instanceID)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res)))
-		_, _ = w.Write(res)
-		respDurUs = time.Since(respStart).Microseconds()
-		a.metrics.status200.Add(1)
-		a.metrics.latencyTotalNs.Add(time.Since(started).Nanoseconds())
 		a.maybeTrace(reqID, status, readDurUs, parseDurUs, evalDurUs, respDurUs, started, parseErr, evalErr)
 		return
 	}
