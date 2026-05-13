@@ -239,9 +239,12 @@ pub const Scorer = struct {
         const cluster_indices = s.findNearestClusters(query, NPROBE);
         const q_i16 = queryToVec16I16(query);
 
+        const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
         var top_k = TopK.init();
+        var cluster_contrib: [NPROBE]u32 = .{0} ** NPROBE;
 
-        var remaining_budget: u32 = TOTAL_SCAN_BUDGET;
+        const pass1_budget = @as(u32, @intCast(@as(u64, TOTAL_SCAN_BUDGET) * 60 / 100));
+        var remaining_budget: u32 = pass1_budget;
         const probes_total: usize = NPROBE;
         for (0..probes_total) |i| {
             if (remaining_budget == 0) break;
@@ -251,7 +254,6 @@ pub const Scorer = struct {
             const range = s.dataset.clusterRange(cluster_id);
             if (range.start >= range.end) continue;
 
-            const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
             const start = range.start;
             const end = @min(range.end, max_vec_idx);
             if (end <= start) continue;
@@ -294,6 +296,79 @@ pub const Scorer = struct {
                 const dist = @reduce(.Add, sq);
                 const global_idx = start + j;
                 top_k.insert(dist, global_idx);
+                cluster_contrib[i] += 1;
+            }
+        }
+
+        const pass2_budget = TOTAL_SCAN_BUDGET - pass1_budget;
+        var pass2_clusters: [2]u32 = .{ 0, 0 };
+        var pass2_counts: [2]u32 = .{ 0, 0 };
+
+        var c: u32 = 0;
+        while (c < probes_total) : (c += 1) {
+            if (cluster_contrib[c] > 0) {
+                if (cluster_contrib[c] >= pass2_counts[0]) {
+                    pass2_counts[1] = pass2_counts[0];
+                    pass2_clusters[1] = pass2_clusters[0];
+                    pass2_counts[0] = cluster_contrib[c];
+                    pass2_clusters[0] = @as(u32, @intCast(c));
+                } else if (cluster_contrib[c] >= pass2_counts[1]) {
+                    pass2_counts[1] = cluster_contrib[c];
+                    pass2_clusters[1] = @as(u32, @intCast(c));
+                }
+            }
+        }
+
+        if (pass2_counts[0] > 0) {
+            const total_pass2_contrib = pass2_counts[0] + pass2_counts[1];
+            var p: u2 = 0;
+            while (p < 2) : (p += 1) {
+                if (pass2_clusters[p] >= s.n_clusters) continue;
+                const ci = pass2_clusters[p];
+                const range = s.dataset.clusterRange(ci);
+                if (range.start >= range.end) continue;
+
+                const start = range.start;
+                const end = @min(range.end, max_vec_idx);
+                if (end <= start) continue;
+
+                const cluster_len = end - start;
+                const alloc_budget = @as(u32, @intCast(@as(u64, pass2_budget) * @as(u64, pass2_counts[p]) / @as(u64, total_pass2_contrib)));
+                const scan_len = @min(cluster_len, @max(alloc_budget, 1));
+                const scan_end = start + scan_len;
+
+                if (sample_stats) {
+                    _ = runtime_stats.cluster_scanned_vectors.fetchAdd(@as(u64, scan_len) * STATS_SAMPLE_RATE, .monotonic);
+                }
+
+                const vec_start = @as(u64, start) * 16;
+                const vec_end = @as(u64, scan_end) * 16;
+                if (vec_end > s.dataset.vectors_mmap.len) continue;
+
+                const vec_slice = s.dataset.vectors_mmap[vec_start..vec_end];
+                var j: u32 = 0;
+                while (j < scan_len) : (j += 1) {
+                    const vec_offset = @as(u64, j) * 16;
+                    if (vec_offset + 16 > vec_slice.len) break;
+
+                    if (j + 2 < scan_len) {
+                        const pf_offset = @as(usize, @intCast((@as(u64, j) + 2) * 16));
+                        if (pf_offset + 16 <= vec_slice.len) {
+                            @prefetch(vec_slice.ptr + pf_offset, .{ .rw = .read, .cache = .data, .locality = 3 });
+                        }
+                    }
+
+                    const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(vec_slice.ptr) + vec_offset));
+                    const v_u8: @Vector(16, u8) = ptr[0..16].*;
+                    const v_i8: Vec16I8 = @bitCast(v_u8);
+                    const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+                    const diff: Vec16I16 = q_i16 - v_i16;
+                    const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+                    const sq: Vec16I32 = diff_i32 * diff_i32;
+                    const dist = @reduce(.Add, sq);
+                    const global_idx = start + j;
+                    top_k.insert(dist, global_idx);
+                }
             }
         }
 
@@ -301,7 +376,6 @@ pub const Scorer = struct {
             if (sample_stats) {
                 _ = runtime_stats.fallback_hits.fetchAdd(STATS_SAMPLE_RATE, .monotonic);
             }
-            const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
             if (sample_stats) {
                 _ = runtime_stats.fallback_scanned_vectors.fetchAdd(@as(u64, max_vec_idx) * STATS_SAMPLE_RATE, .monotonic);
             }
