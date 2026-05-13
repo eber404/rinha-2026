@@ -55,6 +55,8 @@ docs/              # plans and notes
 - If `/fraud-score` returns `503` while `/ready` is `200`, verify `fraud-api/src/dataset.zig` path buffers are null-terminated after `std.fmt.bufPrint`; missing `\0` can break `linux.open` and keep scorer uninitialized.
 - If HAProxy logs show `be_fraud_api/<NOSRV> ... SC-- 503`, inspect UDS saturation/backlog and backend flapping first.
 - If HAProxy logs show many `sH--` with `~30000ms` on `api1`, treat as backend stall/queue saturation under load, not scoring quality issue.
+- If benchmark shows `http_errors` exploding while containers stay `Up`, inspect `lb-zig/src/main.zig` connection lifecycle first: when backend reaches EOF and response buffer is drained, `Conn` must be freed immediately; otherwise pool exhaustion causes mass drops and `Empty reply from server`.
+- If LB logs show repeated backend socket allocation failures around fd `1023`-`819x`, check process `RLIMIT_NOFILE`; set high limit early (e.g. `setrlimit(NOFILE, 65535)`) and confirm connections are being released.
 
 ## Performance Experiments (2026-05-13)
 
