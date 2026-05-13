@@ -248,8 +248,22 @@ pub const Scorer = struct {
         const probes_total: usize = NPROBE;
         for (0..probes_total) |i| {
             if (remaining_budget == 0) break;
+
             const cluster_id = cluster_indices[i];
             if (cluster_id >= s.n_clusters) continue;
+
+            if (top_k.count >= K) {
+                const centroid_offset = @as(usize, cluster_id) * 16;
+                const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(s.dataset.centroids_mmap.ptr) + centroid_offset));
+                const c_u8: @Vector(16, u8) = ptr[0..16].*;
+                const c_i8: Vec16I8 = @bitCast(c_u8);
+                const c_i16: Vec16I16 = @as(Vec16I16, c_i8);
+                const c_diff: Vec16I16 = q_i16 - c_i16;
+                const c_diff_i32: Vec16I32 = @as(Vec16I32, c_diff);
+                const c_sq: Vec16I32 = c_diff_i32 * c_diff_i32;
+                const centroid_dist = @reduce(.Add, c_sq);
+                if (centroid_dist >= top_k.distances[K - 1]) continue;
+            }
 
             const range = s.dataset.clusterRange(cluster_id);
             if (range.start >= range.end) continue;
