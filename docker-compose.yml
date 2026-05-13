@@ -26,20 +26,40 @@ services:
       - INSTANCE_ID=2
       - MOCK_MODE=${MOCK_MODE:-}
 
-  haproxy:
+  # haproxy:
+  #   build:
+  #     context: .
+  #     dockerfile: lb-c/Dockerfile
+  #   container_name: haproxy
+  #   ports:
+  #     - '9999:9999'
+  #   depends_on:
+  #     - server-1
+  #     - server-2
+  #   environment:
+  #     - LB_WORKERS=1
+  #   volumes:
+  #     - rinha-sockets:/tmp/rinha
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.40'
+  #         memory: '64MB'
+
+  lb-zig-uring:
     build:
       context: .
-      dockerfile: lb-c/Dockerfile
-    container_name: haproxy
+      dockerfile: lb-zig-uring/Dockerfile
+    container_name: lb-zig-uring
     ports:
       - '9999:9999'
     depends_on:
       - server-1
       - server-2
-    environment:
-      - LB_WORKERS=1
     volumes:
       - rinha-sockets:/tmp/rinha
+    security_opt:
+      - seccomp:unconfined
     deploy:
       resources:
         limits:
