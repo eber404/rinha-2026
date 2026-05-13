@@ -284,8 +284,14 @@ pub const Scorer = struct {
                     }
                 }
 
-                const vbytes = vec_slice[vec_offset .. vec_offset + 16];
-                const dist = distanceFromBytesVec(q_i16, vbytes);
+                const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(vec_slice.ptr) + vec_offset));
+                const v_u8: @Vector(16, u8) = ptr[0..16].*;
+                const v_i8: Vec16I8 = @bitCast(v_u8);
+                const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+                const diff: Vec16I16 = q_i16 - v_i16;
+                const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+                const sq: Vec16I32 = diff_i32 * diff_i32;
+                const dist = @reduce(.Add, sq);
                 const global_idx = start + j;
                 top_k.insert(dist, global_idx);
             }
@@ -304,8 +310,14 @@ pub const Scorer = struct {
                 const vec_offset = @as(u64, idx) * 16;
                 if (vec_offset + 16 > s.dataset.vectors_mmap.len) break;
 
-                const vbytes = s.dataset.vectors_mmap[vec_offset .. vec_offset + 16];
-                const dist = distanceFromBytesVec(q_i16, vbytes);
+                const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(s.dataset.vectors_mmap.ptr) + vec_offset));
+                const v_u8: @Vector(16, u8) = ptr[0..16].*;
+                const v_i8: Vec16I8 = @bitCast(v_u8);
+                const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+                const diff: Vec16I16 = q_i16 - v_i16;
+                const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+                const sq: Vec16I32 = diff_i32 * diff_i32;
+                const dist = @reduce(.Add, sq);
                 top_k.insertUnique(dist, idx);
             }
         }
