@@ -16,7 +16,7 @@ pub const QueryVector = quantization.QueryVector;
 pub const VECTOR_DIM = 16;
 pub const K: u32 = 5;
 pub const NPROBE: u32 = 8;
-pub const TOTAL_SCAN_BUDGET: u32 = 28_000;
+pub const TOTAL_SCAN_BUDGET: u32 = 20_000;
 const STATS_SAMPLE_SHIFT: u6 = 6;
 const STATS_SAMPLE_RATE: u64 = @as(u64, 1) << STATS_SAMPLE_SHIFT;
 
