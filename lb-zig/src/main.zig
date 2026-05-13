@@ -9,7 +9,7 @@ fn toFd(res: usize) !linux.fd_t {
     };
 }
 
-const MAX_CONN: usize = 131072;
+const MAX_CONN: usize = 2048;
 const READ_BUF: usize = 8192;
 const CQE_BATCH: usize = 256;
 

@@ -60,3 +60,6 @@ main_native
 main_lb
 
 benchmarks
+
+# local generated dataset
+fraud-api/vector-index/references.json

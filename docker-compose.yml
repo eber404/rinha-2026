@@ -1,18 +1,28 @@
 services:
+  preprocess:
+    image: ziglings/ziglang:latest
+    container_name: preprocess
+    working_dir: /workspace
+    command: ["/workspace/fraud-api/scripts/preprocess-container.sh"]
+    volumes:
+      - ./:/workspace
+
   api-1: &api
     container_name: api-1
     build:
       context: .
-      dockerfile: api/Dockerfile
+      dockerfile: fraud-api/Dockerfile
     volumes:
-      - ./fraud-engine/vector-index:/app/fraud-engine/vector-index:rw
+      - ./fraud-api/vector-index:/data/vector-index:rw
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
     restart: on-failure
+    depends_on:
+      preprocess:
+        condition: service_completed_successfully
     environment:
       - INSTANCE_ID=1
-      - MOCK_MODE=${MOCK_MODE:-}
     deploy:
       resources:
         limits:
@@ -24,7 +34,6 @@ services:
     container_name: api-2
     environment:
       - INSTANCE_ID=2
-      - MOCK_MODE=${MOCK_MODE:-}
 
   lb-zig:
     build:
