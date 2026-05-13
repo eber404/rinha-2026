@@ -6,6 +6,7 @@ const scorer_mod = @import("scorer.zig");
 const quantization = @import("quantization.zig");
 
 const MAX_REQ = 64 * 1024;
+const MAX_WORKERS: usize = 8;
 
 fn statusLine(code: u16) []const u8 {
     return switch (code) {
@@ -142,11 +143,34 @@ fn handleConn(fd: linux.fd_t, scorer: *scorer_mod.Scorer) void {
     writeResponse(fd, 200, json, "application/json");
 }
 
+const WorkerCtx = struct {
+    listen_fd: linux.fd_t,
+    scorer: *scorer_mod.Scorer,
+};
+
+fn workerLoop(ctx: *WorkerCtx) void {
+    while (true) {
+        const cfd = toFd(linux.accept4(ctx.listen_fd, null, null, linux.SOCK.CLOEXEC)) catch continue;
+        handleConn(cfd, ctx.scorer);
+        _ = linux.close(cfd);
+    }
+}
+
+fn parseWorkerCount(init: std.process.Init.Minimal) usize {
+    const raw = std.process.Environ.getPosix(init.environ, "API_WORKERS") orelse return 2;
+    const s = std.mem.sliceTo(raw, 0);
+    const parsed = std.fmt.parseInt(usize, s, 10) catch return 2;
+    if (parsed == 0) return 1;
+    return @min(parsed, MAX_WORKERS);
+}
+
 pub fn main(init: std.process.Init.Minimal) !void {
     const env_instance = std.process.Environ.getPosix(init.environ, "INSTANCE_ID");
     const instance = if (env_instance) |v| std.mem.sliceTo(v, 0) else "1";
     var socket_path_buf: [128]u8 = undefined;
     const socket_path = try std.fmt.bufPrint(&socket_path_buf, "/tmp/rinha/api-{s}.sock", .{instance});
+    if (socket_path.len + 1 > socket_path_buf.len) return error.NameTooLong;
+    socket_path_buf[socket_path.len] = 0;
 
     var data_dir_buf: [128]u8 = undefined;
     const data_dir = try std.fmt.bufPrint(&data_dir_buf, "/data/vector-index", .{});
@@ -159,6 +183,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const fd = try toFd(linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0));
     defer _ = linux.close(fd);
 
+    _ = linux.unlink(@ptrCast(&socket_path_buf));
+
     var addr = std.mem.zeroes(linux.sockaddr.un);
     addr.family = linux.AF.UNIX;
     if (socket_path.len >= addr.path.len) return error.NameTooLong;
@@ -167,9 +193,18 @@ pub fn main(init: std.process.Init.Minimal) !void {
     try ensureOk(linux.bind(fd, @ptrCast(&addr), @sizeOf(linux.sockaddr.un)));
     try ensureOk(linux.listen(fd, 1024));
 
-    while (true) {
-        const cfd = toFd(linux.accept4(fd, null, null, linux.SOCK.CLOEXEC)) catch continue;
-        handleConn(cfd, &scorer);
-        _ = linux.close(cfd);
+    const worker_count = parseWorkerCount(init);
+    var workers: [MAX_WORKERS]std.Thread = undefined;
+    var contexts: [MAX_WORKERS]WorkerCtx = undefined;
+
+    var i: usize = 0;
+    while (i < worker_count) : (i += 1) {
+        contexts[i] = .{ .listen_fd = fd, .scorer = &scorer };
+        workers[i] = std.Thread.spawn(.{}, workerLoop, .{&contexts[i]}) catch return error.SyscallFailed;
+    }
+
+    i = 0;
+    while (i < worker_count) : (i += 1) {
+        workers[i].join();
     }
 }
