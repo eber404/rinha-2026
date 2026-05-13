@@ -59,7 +59,7 @@ main_debug
 main_native
 main_lb
 
-benchmarks
+.benchmarks
 
 # local generated dataset
 fraud-api/vector-index/references.json
