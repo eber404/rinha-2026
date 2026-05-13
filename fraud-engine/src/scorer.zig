@@ -16,6 +16,8 @@ pub const VECTOR_DIM = 16;
 pub const K: u32 = 5;
 pub const NPROBE: u32 = 8;
 pub const TOTAL_SCAN_BUDGET: u32 = 28_000;
+const STATS_SAMPLE_SHIFT: u6 = 6;
+const STATS_SAMPLE_RATE: u64 = @as(u64, 1) << STATS_SAMPLE_SHIFT;
 
 const TopK = struct {
     distances: [K]i32,
@@ -52,6 +54,14 @@ const TopK = struct {
         }
     }
 
+    fn insertUnique(t: *TopK, dist: i32, idx: u32) void {
+        var i: u32 = 0;
+        while (i < t.count) : (i += 1) {
+            if (t.indices[i] == idx) return;
+        }
+        t.insert(dist, idx);
+    }
+
     fn reset(t: *TopK) void {
         t.count = 0;
         @memset(&t.distances, 0);
@@ -74,6 +84,34 @@ fn distance(q: *const QueryVector, v: []const i8) i32 {
         sum += diff * diff;
     }
     return sum;
+}
+
+inline fn sqDiff(q: i8, b: u8) i32 {
+    const diff = @as(i32, q) - @as(i32, @as(i8, @bitCast(b)));
+    return diff * diff;
+}
+
+fn distanceFromBytes(q: *const QueryVector, vbytes: []const u8) i32 {
+    return sqDiff(q[0], vbytes[0]) +
+        sqDiff(q[1], vbytes[1]) +
+        sqDiff(q[2], vbytes[2]) +
+        sqDiff(q[3], vbytes[3]) +
+        sqDiff(q[4], vbytes[4]) +
+        sqDiff(q[5], vbytes[5]) +
+        sqDiff(q[6], vbytes[6]) +
+        sqDiff(q[7], vbytes[7]) +
+        sqDiff(q[8], vbytes[8]) +
+        sqDiff(q[9], vbytes[9]) +
+        sqDiff(q[10], vbytes[10]) +
+        sqDiff(q[11], vbytes[11]) +
+        sqDiff(q[12], vbytes[12]) +
+        sqDiff(q[13], vbytes[13]) +
+        sqDiff(q[14], vbytes[14]) +
+        sqDiff(q[15], vbytes[15]);
+}
+
+inline fn shouldSampleStats(req_num: u64) bool {
+    return (req_num & (STATS_SAMPLE_RATE - 1)) == 0;
 }
 
 pub const Scorer = struct {
@@ -129,7 +167,8 @@ pub const Scorer = struct {
     }
 
     pub fn score(s: *const Scorer, query: *const QueryVector) f32 {
-        _ = runtime_stats.requests.fetchAdd(1, .monotonic);
+        const req_num = runtime_stats.requests.fetchAdd(1, .monotonic) + 1;
+        const sample_stats = shouldSampleStats(req_num);
         if (s.n_clusters == 0 or s.dataset.vectors_mmap.len == 0) {
             return 0.0;
         }
@@ -158,7 +197,9 @@ pub const Scorer = struct {
             const scan_len = @min(cluster_len, per_cluster_budget);
             const scan_end = start + scan_len;
 
-            _ = runtime_stats.cluster_scanned_vectors.fetchAdd(@as(u64, scan_len), .monotonic);
+            if (sample_stats) {
+                _ = runtime_stats.cluster_scanned_vectors.fetchAdd(@as(u64, scan_len) * STATS_SAMPLE_RATE, .monotonic);
+            }
             remaining_budget -|= scan_len;
 
             const vec_start = @as(u64, start) * 16;
@@ -171,35 +212,29 @@ pub const Scorer = struct {
                 const vec_offset = @as(u64, j) * 16;
                 if (vec_offset + 16 > vec_slice.len) break;
 
-                var v: [16]i8 = undefined;
-                for (0..16) |dim| {
-                    v[dim] = @as(i8, @bitCast(vec_slice[vec_offset + dim]));
-                }
-
-                const dist = distance(query, &v);
+                const vbytes = vec_slice[vec_offset .. vec_offset + 16];
+                const dist = distanceFromBytes(query, vbytes);
                 const global_idx = start + j;
                 top_k.insert(dist, global_idx);
             }
         }
 
         if (top_k.count < K) {
-            _ = runtime_stats.fallback_hits.fetchAdd(1, .monotonic);
+            if (sample_stats) {
+                _ = runtime_stats.fallback_hits.fetchAdd(STATS_SAMPLE_RATE, .monotonic);
+            }
             const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
-            _ = runtime_stats.fallback_scanned_vectors.fetchAdd(@as(u64, max_vec_idx), .monotonic);
+            if (sample_stats) {
+                _ = runtime_stats.fallback_scanned_vectors.fetchAdd(@as(u64, max_vec_idx) * STATS_SAMPLE_RATE, .monotonic);
+            }
             var idx: u32 = 0;
             while (idx < max_vec_idx) : (idx += 1) {
-                var v: [16]i8 = undefined;
                 const vec_offset = @as(u64, idx) * 16;
                 if (vec_offset + 16 > s.dataset.vectors_mmap.len) break;
 
-                for (0..16) |dim| {
-                    v[dim] = @as(i8, @bitCast(s.dataset.vectors_mmap[vec_offset + dim]));
-                }
-
-                if (top_k.contains(idx)) continue;
-
-                const dist = distance(query, &v);
-                top_k.insert(dist, idx);
+                const vbytes = s.dataset.vectors_mmap[vec_offset .. vec_offset + 16];
+                const dist = distanceFromBytes(query, vbytes);
+                top_k.insertUnique(dist, idx);
             }
         }
 
@@ -219,3 +254,30 @@ pub const Scorer = struct {
         return s.score(query);
     }
 };
+
+test "distance from bytes equals distance from array" {
+    const q: QueryVector = .{ 12, -8, 31, -44, 7, 90, -3, 55, -12, 4, 0, 99, -127, 18, 76, -64 };
+    const raw: [16]u8 = .{ 1, 255, 10, 250, 17, 222, 13, 205, 48, 10, 200, 7, 128, 99, 54, 180 };
+
+    var v: [16]i8 = undefined;
+    for (0..16) |i| v[i] = @as(i8, @bitCast(raw[i]));
+
+    const want = distance(&q, &v);
+    const got = distanceFromBytes(&q, raw[0..]);
+    try std.testing.expectEqual(want, got);
+}
+
+test "topk insertUnique ignores duplicate indices" {
+    var topk = TopK.init();
+    topk.insert(40, 10);
+    topk.insertUnique(20, 10);
+    try std.testing.expectEqual(@as(u32, 1), topk.count);
+    try std.testing.expectEqual(@as(i32, 40), topk.distances[0]);
+}
+
+test "shouldSampleStats samples each 64 requests" {
+    try std.testing.expect(!shouldSampleStats(1));
+    try std.testing.expect(!shouldSampleStats(63));
+    try std.testing.expect(shouldSampleStats(64));
+    try std.testing.expect(shouldSampleStats(128));
+}

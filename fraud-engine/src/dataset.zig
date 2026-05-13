@@ -19,6 +19,13 @@ const O_WRONLY_V: u32 = @as(u32, 1);
 const O_CREAT_V: u32 = @as(u32, 64);
 const O_TRUNC_V: u32 = @as(u32, 512);
 
+inline fn decodeU32Le(bytes: []const u8) u32 {
+    return @as(u32, bytes[0]) |
+        @as(u32, bytes[1]) << 8 |
+        @as(u32, bytes[2]) << 16 |
+        @as(u32, bytes[3]) << 24;
+}
+
 const Record = struct {
     start: u32,
     end: u32,
@@ -38,6 +45,9 @@ pub const Dataset = struct {
     cluster_offsets_mmap: []align(PAGE_SIZE) const u8 = &.{},
     scales_mmap: []align(PAGE_SIZE) const u8 = &.{},
     offsets_mmap: []align(PAGE_SIZE) const u8 = &.{},
+
+    cluster_offsets_cache: [257]u32 = [_]u32{0} ** 257,
+    cluster_count: u32 = 0,
 
     pub fn init() Dataset {
         return Dataset{};
@@ -118,6 +128,18 @@ inline fn toO(_: []const u8) linux.O {
         if (d.cluster_offsets_mmap.len % 8 != 0) return error.OpenFailed;
         if (d.scales_mmap.len != 56) return error.OpenFailed;
         if (d.offsets_mmap.len != 56) return error.OpenFailed;
+
+        const cluster_records = @as(u32, @truncate(d.cluster_offsets_mmap.len / 8));
+        if (cluster_records == 0 or cluster_records > 256) return error.OpenFailed;
+        d.cluster_count = cluster_records;
+        var c: u32 = 0;
+        while (c < cluster_records) : (c += 1) {
+            const base = @as(usize, c) * 8;
+            const start = decodeU32Le(d.cluster_offsets_mmap[base .. base + 4]);
+            const end = decodeU32Le(d.cluster_offsets_mmap[base + 4 .. base + 8]);
+            d.cluster_offsets_cache[c] = start;
+            d.cluster_offsets_cache[c + 1] = end;
+        }
     }
 
     pub fn deinit(d: *Dataset) void {
@@ -165,18 +187,8 @@ inline fn toO(_: []const u8) linux.O {
     }
 
     pub fn clusterRange(d: *const Dataset, cluster: u32) Record {
-        if (d.cluster_offsets_mmap.len == 0) return .{ .start = 0, .end = 0 };
-        const offset = @as(u64, cluster) * 8;
-        if (offset + 8 > d.cluster_offsets_mmap.len) return .{ .start = 0, .end = 0 };
-        const start = @as(u32, d.cluster_offsets_mmap[offset]) |
-            @as(u32, d.cluster_offsets_mmap[offset + 1]) << 8 |
-            @as(u32, d.cluster_offsets_mmap[offset + 2]) << 16 |
-            @as(u32, d.cluster_offsets_mmap[offset + 3]) << 24;
-        const end = @as(u32, d.cluster_offsets_mmap[offset + 4]) |
-            @as(u32, d.cluster_offsets_mmap[offset + 5]) << 8 |
-            @as(u32, d.cluster_offsets_mmap[offset + 6]) << 16 |
-            @as(u32, d.cluster_offsets_mmap[offset + 7]) << 24;
-        return .{ .start = start, .end = end };
+        if (cluster >= d.cluster_count) return .{ .start = 0, .end = 0 };
+        return .{ .start = d.cluster_offsets_cache[cluster], .end = d.cluster_offsets_cache[cluster + 1] };
     }
 
     pub fn scales(d: *const Dataset) [14]f32 {
@@ -209,3 +221,8 @@ inline fn toO(_: []const u8) linux.O {
         return result;
     }
 };
+
+test "decodeU32Le decodes little-endian values" {
+    const bytes = [_]u8{ 0x78, 0x56, 0x34, 0x12 };
+    try std.testing.expectEqual(@as(u32, 0x12345678), decodeU32Le(bytes[0..]));
+}
