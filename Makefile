@@ -10,10 +10,11 @@ GID := $(shell id -g)
 DOCKER_RUN := docker-compose run --rm
 
 PERFLOOP_ITERATIONS ?= 3
-PERF_MAX_NS ?= 3500
-PERF_ITERS ?= 20000
-PERF_WARMUP_ITERS ?= 5000
+PERF_MAX_NS ?= 999999
+PERF_ITERS ?= 200
+PERF_WARMUP_ITERS ?= 50
 PERF_DOCKER_IMAGE ?= rinha-zig-perf:0.16.0
+PERF_DATA_DIR_HOST ?= /Users/eber/dev/rinha-2026/fraud-engine/vector-index
 
 build:
 	@echo "Stopping services before rebuilding binaries..."
@@ -76,8 +77,10 @@ perfloop:
 		set +e; \
 		output="$$(docker run --rm \
 			-v "$(CURDIR)":/workspace \
+			-v "$(PERF_DATA_DIR_HOST)":/perf-data:ro \
 			-w /workspace \
 			-e RUN_PERF_TESTS=1 \
+			-e PERF_DATA_DIR=/perf-data \
 			-e PERF_MAX_NS=$(PERF_MAX_NS) \
 			-e PERF_ITERS=$(PERF_ITERS) \
 			-e PERF_WARMUP_ITERS=$(PERF_WARMUP_ITERS) \

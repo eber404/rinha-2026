@@ -16,7 +16,7 @@ pub const QueryVector = quantization.QueryVector;
 pub const VECTOR_DIM = 16;
 pub const K: u32 = 5;
 pub const NPROBE: u32 = 8;
-pub const TOTAL_SCAN_BUDGET: u32 = 28_000;
+pub const TOTAL_SCAN_BUDGET: u32 = 20_000;
 const STATS_SAMPLE_SHIFT: u6 = 6;
 const STATS_SAMPLE_RATE: u64 = @as(u64, 1) << STATS_SAMPLE_SHIFT;
 
@@ -35,24 +35,26 @@ const TopK = struct {
 
     fn insert(t: *TopK, dist: i32, idx: u32) void {
         if (t.count < K) {
-            t.distances[t.count] = dist;
-            t.indices[t.count] = idx;
+            var pos = t.count;
+            while (pos > 0 and dist < t.distances[pos - 1]) : (pos -= 1) {
+                t.distances[pos] = t.distances[pos - 1];
+                t.indices[pos] = t.indices[pos - 1];
+            }
+            t.distances[pos] = dist;
+            t.indices[pos] = idx;
             t.count += 1;
-        } else {
-            var worst_idx: u32 = 0;
-            var worst_dist: i32 = t.distances[0];
-            var i: u32 = 1;
-            while (i < K) : (i += 1) {
-                if (t.distances[i] > worst_dist) {
-                    worst_dist = t.distances[i];
-                    worst_idx = i;
-                }
-            }
-            if (dist < worst_dist) {
-                t.distances[worst_idx] = dist;
-                t.indices[worst_idx] = idx;
-            }
+            return;
         }
+
+        if (dist >= t.distances[K - 1]) return;
+
+        var pos: u32 = K - 1;
+        while (pos > 0 and dist < t.distances[pos - 1]) : (pos -= 1) {
+            t.distances[pos] = t.distances[pos - 1];
+            t.indices[pos] = t.indices[pos - 1];
+        }
+        t.distances[pos] = dist;
+        t.indices[pos] = idx;
     }
 
     fn insertUnique(t: *TopK, dist: i32, idx: u32) void {
@@ -87,43 +89,37 @@ fn distance(q: *const QueryVector, v: []const i8) i32 {
     return sum;
 }
 
-inline fn sqDiff(q: i8, b: u8) i32 {
-    const diff = @as(i32, q) - @as(i32, @as(i8, @bitCast(b)));
-    return diff * diff;
+const Vec16I8 = @Vector(16, i8);
+const Vec16I16 = @Vector(16, i16);
+const Vec16I32 = @Vector(16, i32);
+
+inline fn queryToVec16I16(q: *const QueryVector) Vec16I16 {
+    const q_i8: Vec16I8 = q.*;
+    return @as(Vec16I16, q_i8);
 }
 
-fn distanceFromBytes(q: *const QueryVector, vbytes: []const u8) i32 {
-    return sqDiff(q[0], vbytes[0]) +
-        sqDiff(q[1], vbytes[1]) +
-        sqDiff(q[2], vbytes[2]) +
-        sqDiff(q[3], vbytes[3]) +
-        sqDiff(q[4], vbytes[4]) +
-        sqDiff(q[5], vbytes[5]) +
-        sqDiff(q[6], vbytes[6]) +
-        sqDiff(q[7], vbytes[7]) +
-        sqDiff(q[8], vbytes[8]) +
-        sqDiff(q[9], vbytes[9]) +
-        sqDiff(q[10], vbytes[10]) +
-        sqDiff(q[11], vbytes[11]) +
-        sqDiff(q[12], vbytes[12]) +
-        sqDiff(q[13], vbytes[13]) +
-        sqDiff(q[14], vbytes[14]) +
-        sqDiff(q[15], vbytes[15]);
+inline fn distanceFromBytesVec(q_i16: Vec16I16, vbytes: []const u8) i32 {
+    const v_u8: @Vector(16, u8) = vbytes[0..16].*;
+    const v_i8: Vec16I8 = @bitCast(v_u8);
+    const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+    const diff: Vec16I16 = q_i16 - v_i16;
+    const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+    const sq: Vec16I32 = diff_i32 * diff_i32;
+    return @reduce(.Add, sq);
 }
 
 inline fn shouldSampleStats(req_num: u64) bool {
     return (req_num & (STATS_SAMPLE_RATE - 1)) == 0;
 }
 
+fn getPerfEnv(name: []const u8) ?[]const u8 {
+    if (!builtin.is_test) return null;
+    return std.process.Environ.getPosix(std.testing.environ, name);
+}
+
 fn perfTestsEnabled() bool {
     const raw = getPerfEnv("RUN_PERF_TESTS") orelse return false;
     return std.mem.eql(u8, raw, "1") or std.ascii.eqlIgnoreCase(raw, "true") or std.ascii.eqlIgnoreCase(raw, "yes");
-}
-
-fn getPerfEnv(name: []const u8) ?[]const u8 {
-    if (!builtin.is_test) return null;
-    const raw = std.process.Environ.getPosix(std.testing.environ, name) orelse return null;
-    return raw;
 }
 
 fn parseEnvU64(name: []const u8, default_value: u64) u64 {
@@ -134,9 +130,7 @@ fn parseEnvU64(name: []const u8, default_value: u64) u64 {
 fn monotonicNowNs() u64 {
     var ts: std.os.linux.timespec = undefined;
     if (std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts) != 0) return 0;
-    const sec = @as(u64, @intCast(ts.sec));
-    const nsec = @as(u64, @intCast(ts.nsec));
-    return sec * std.time.ns_per_s + nsec;
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
 }
 
 fn runScorePerfGate() !void {
@@ -145,11 +139,7 @@ fn runScorePerfGate() !void {
     const warmup_iters = @max(parseEnvU64("PERF_WARMUP_ITERS", 5_000), 1);
     const iters = @max(parseEnvU64("PERF_ITERS", 20_000), 1);
     const max_ns = @max(parseEnvU64("PERF_MAX_NS", 3_500), 1);
-
-    const data_dir = if (getPerfEnv("PERF_DATA_DIR")) |dir|
-        dir
-    else
-        "fraud-engine/vector-index";
+    const data_dir = getPerfEnv("PERF_DATA_DIR") orelse "fraud-engine/vector-index";
 
     var ds = dataset.Dataset.init();
     defer ds.deinit();
@@ -157,30 +147,19 @@ fn runScorePerfGate() !void {
 
     var scorer_instance = Scorer.init(&ds);
     const query: QueryVector = .{ 7, -4, 31, -16, 22, 8, -11, 3, 9, -2, 5, 1, -7, 13, -19, 27 };
-
     var sink: f32 = 0.0;
 
     var i: u64 = 0;
-    while (i < warmup_iters) : (i += 1) {
-        sink += scorer_instance.score(&query);
-    }
+    while (i < warmup_iters) : (i += 1) sink += scorer_instance.score(&query);
 
     const start_ns = monotonicNowNs();
     i = 0;
-    while (i < iters) : (i += 1) {
-        sink += scorer_instance.score(&query);
-    }
-
+    while (i < iters) : (i += 1) sink += scorer_instance.score(&query);
     const end_ns = monotonicNowNs();
     if (end_ns <= start_ns) return error.SkipZigTest;
-    const elapsed_ns = end_ns - start_ns;
-    const ns_per_op = elapsed_ns / iters;
 
-    std.debug.print(
-        "perf(score): ns/op={d} max={d} iters={d} warmup={d} sink={d}\n",
-        .{ ns_per_op, max_ns, iters, warmup_iters, sink },
-    );
-
+    const ns_per_op = (end_ns - start_ns) / iters;
+    std.debug.print("perf(score): ns/op={d} max={d} iters={d} warmup={d} sink={d}\n", .{ ns_per_op, max_ns, iters, warmup_iters, sink });
     try std.testing.expect(ns_per_op <= max_ns);
     try std.testing.expect(!std.math.isNan(sink));
 }
@@ -207,6 +186,7 @@ pub const Scorer = struct {
 
         const clusters_to_scan = @min(s.n_clusters, 256);
         const nprobe_count: usize = @intCast(@min(nprobe, s.n_clusters));
+        const q_i16 = queryToVec16I16(query);
         var best_indices: [NPROBE]u32 = undefined;
         var best_dists: [NPROBE]i32 = undefined;
         @memset(&best_indices, 0);
@@ -215,8 +195,9 @@ pub const Scorer = struct {
         var best_count: usize = 0;
         var i: u32 = 0;
         while (i < clusters_to_scan) : (i += 1) {
-            const c = s.dataset.centroidAt(i);
-            const dist = distance(query, &c);
+            const centroid_offset = @as(usize, i) * 16;
+            const centroid_bytes = s.dataset.centroids_mmap[centroid_offset .. centroid_offset + 16];
+            const dist = distanceFromBytesVec(q_i16, centroid_bytes);
 
             if (best_count < nprobe_count) {
                 var pos = best_count;
@@ -256,24 +237,42 @@ pub const Scorer = struct {
         }
 
         const cluster_indices = s.findNearestClusters(query, NPROBE);
+        const q_i16 = queryToVec16I16(query);
 
+        const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
         var top_k = TopK.init();
+        var cluster_contrib: [NPROBE]u32 = .{0} ** NPROBE;
 
-        var remaining_budget: u32 = TOTAL_SCAN_BUDGET;
-        for (0..NPROBE) |i| {
+        const pass1_budget = @as(u32, @intCast(@as(u64, TOTAL_SCAN_BUDGET) * 60 / 100));
+        var remaining_budget: u32 = pass1_budget;
+        const probes_total: usize = NPROBE;
+        for (0..probes_total) |i| {
             if (remaining_budget == 0) break;
+
             const cluster_id = cluster_indices[i];
             if (cluster_id >= s.n_clusters) continue;
+
+            if (top_k.count >= K) {
+                const centroid_offset = @as(usize, cluster_id) * 16;
+                const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(s.dataset.centroids_mmap.ptr) + centroid_offset));
+                const c_u8: @Vector(16, u8) = ptr[0..16].*;
+                const c_i8: Vec16I8 = @bitCast(c_u8);
+                const c_i16: Vec16I16 = @as(Vec16I16, c_i8);
+                const c_diff: Vec16I16 = q_i16 - c_i16;
+                const c_diff_i32: Vec16I32 = @as(Vec16I32, c_diff);
+                const c_sq: Vec16I32 = c_diff_i32 * c_diff_i32;
+                const centroid_dist = @reduce(.Add, c_sq);
+                if (centroid_dist >= top_k.distances[K - 1]) continue;
+            }
 
             const range = s.dataset.clusterRange(cluster_id);
             if (range.start >= range.end) continue;
 
-            const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
             const start = range.start;
             const end = @min(range.end, max_vec_idx);
             if (end <= start) continue;
 
-            const probes_left = @as(u32, @intCast(NPROBE - i));
+            const probes_left = @as(u32, @intCast(probes_total - i));
             const per_cluster_budget = @max(@divTrunc(remaining_budget, probes_left), 1);
             const cluster_len = end - start;
             const scan_len = @min(cluster_len, per_cluster_budget);
@@ -294,10 +293,96 @@ pub const Scorer = struct {
                 const vec_offset = @as(u64, j) * 16;
                 if (vec_offset + 16 > vec_slice.len) break;
 
-                const vbytes = vec_slice[vec_offset .. vec_offset + 16];
-                const dist = distanceFromBytes(query, vbytes);
+                if (j + 2 < scan_len) {
+                    const pf_offset = @as(usize, @intCast((@as(u64, j) + 2) * 16));
+                    if (pf_offset + 16 <= vec_slice.len) {
+                        @prefetch(vec_slice.ptr + pf_offset, .{ .rw = .read, .cache = .data, .locality = 3 });
+                    }
+                }
+
+                const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(vec_slice.ptr) + vec_offset));
+                const v_u8: @Vector(16, u8) = ptr[0..16].*;
+                const v_i8: Vec16I8 = @bitCast(v_u8);
+                const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+                const diff: Vec16I16 = q_i16 - v_i16;
+                const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+                const sq: Vec16I32 = diff_i32 * diff_i32;
+                const dist = @reduce(.Add, sq);
                 const global_idx = start + j;
                 top_k.insert(dist, global_idx);
+                cluster_contrib[i] += 1;
+            }
+        }
+
+        const pass2_budget = TOTAL_SCAN_BUDGET - pass1_budget;
+        var pass2_clusters: [2]u32 = .{ 0, 0 };
+        var pass2_counts: [2]u32 = .{ 0, 0 };
+
+        var c: u32 = 0;
+        while (c < probes_total) : (c += 1) {
+            if (cluster_contrib[c] > 0) {
+                if (cluster_contrib[c] >= pass2_counts[0]) {
+                    pass2_counts[1] = pass2_counts[0];
+                    pass2_clusters[1] = pass2_clusters[0];
+                    pass2_counts[0] = cluster_contrib[c];
+                    pass2_clusters[0] = @as(u32, @intCast(c));
+                } else if (cluster_contrib[c] >= pass2_counts[1]) {
+                    pass2_counts[1] = cluster_contrib[c];
+                    pass2_clusters[1] = @as(u32, @intCast(c));
+                }
+            }
+        }
+
+        if (pass2_counts[0] > 0) {
+            const total_pass2_contrib = pass2_counts[0] + pass2_counts[1];
+            var p: u2 = 0;
+            while (p < 2) : (p += 1) {
+                if (pass2_clusters[p] >= s.n_clusters) continue;
+                const ci = pass2_clusters[p];
+                const range = s.dataset.clusterRange(ci);
+                if (range.start >= range.end) continue;
+
+                const start = range.start;
+                const end = @min(range.end, max_vec_idx);
+                if (end <= start) continue;
+
+                const cluster_len = end - start;
+                const alloc_budget = @as(u32, @intCast(@as(u64, pass2_budget) * @as(u64, pass2_counts[p]) / @as(u64, total_pass2_contrib)));
+                const scan_len = @min(cluster_len, @max(alloc_budget, 1));
+                const scan_end = start + scan_len;
+
+                if (sample_stats) {
+                    _ = runtime_stats.cluster_scanned_vectors.fetchAdd(@as(u64, scan_len) * STATS_SAMPLE_RATE, .monotonic);
+                }
+
+                const vec_start = @as(u64, start) * 16;
+                const vec_end = @as(u64, scan_end) * 16;
+                if (vec_end > s.dataset.vectors_mmap.len) continue;
+
+                const vec_slice = s.dataset.vectors_mmap[vec_start..vec_end];
+                var j: u32 = 0;
+                while (j < scan_len) : (j += 1) {
+                    const vec_offset = @as(u64, j) * 16;
+                    if (vec_offset + 16 > vec_slice.len) break;
+
+                    if (j + 2 < scan_len) {
+                        const pf_offset = @as(usize, @intCast((@as(u64, j) + 2) * 16));
+                        if (pf_offset + 16 <= vec_slice.len) {
+                            @prefetch(vec_slice.ptr + pf_offset, .{ .rw = .read, .cache = .data, .locality = 3 });
+                        }
+                    }
+
+                    const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(vec_slice.ptr) + vec_offset));
+                    const v_u8: @Vector(16, u8) = ptr[0..16].*;
+                    const v_i8: Vec16I8 = @bitCast(v_u8);
+                    const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+                    const diff: Vec16I16 = q_i16 - v_i16;
+                    const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+                    const sq: Vec16I32 = diff_i32 * diff_i32;
+                    const dist = @reduce(.Add, sq);
+                    const global_idx = start + j;
+                    top_k.insert(dist, global_idx);
+                }
             }
         }
 
@@ -305,7 +390,6 @@ pub const Scorer = struct {
             if (sample_stats) {
                 _ = runtime_stats.fallback_hits.fetchAdd(STATS_SAMPLE_RATE, .monotonic);
             }
-            const max_vec_idx = @as(u32, @truncate(s.dataset.vectors_mmap.len / 16));
             if (sample_stats) {
                 _ = runtime_stats.fallback_scanned_vectors.fetchAdd(@as(u64, max_vec_idx) * STATS_SAMPLE_RATE, .monotonic);
             }
@@ -314,8 +398,14 @@ pub const Scorer = struct {
                 const vec_offset = @as(u64, idx) * 16;
                 if (vec_offset + 16 > s.dataset.vectors_mmap.len) break;
 
-                const vbytes = s.dataset.vectors_mmap[vec_offset .. vec_offset + 16];
-                const dist = distanceFromBytes(query, vbytes);
+                const ptr = @as([*]const u8, @ptrFromInt(@intFromPtr(s.dataset.vectors_mmap.ptr) + vec_offset));
+                const v_u8: @Vector(16, u8) = ptr[0..16].*;
+                const v_i8: Vec16I8 = @bitCast(v_u8);
+                const v_i16: Vec16I16 = @as(Vec16I16, v_i8);
+                const diff: Vec16I16 = q_i16 - v_i16;
+                const diff_i32: Vec16I32 = @as(Vec16I32, diff);
+                const sq: Vec16I32 = diff_i32 * diff_i32;
+                const dist = @reduce(.Add, sq);
                 top_k.insertUnique(dist, idx);
             }
         }
@@ -345,7 +435,7 @@ test "distance from bytes equals distance from array" {
     for (0..16) |i| v[i] = @as(i8, @bitCast(raw[i]));
 
     const want = distance(&q, &v);
-    const got = distanceFromBytes(&q, raw[0..]);
+    const got = distanceFromBytesVec(queryToVec16I16(&q), raw[0..]);
     try std.testing.expectEqual(want, got);
 }
 
@@ -355,6 +445,25 @@ test "topk insertUnique ignores duplicate indices" {
     topk.insertUnique(20, 10);
     try std.testing.expectEqual(@as(u32, 1), topk.count);
     try std.testing.expectEqual(@as(i32, 40), topk.distances[0]);
+}
+
+test "topk keeps sorted best distances" {
+    var topk = TopK.init();
+    topk.insert(30, 1);
+    topk.insert(10, 2);
+    topk.insert(20, 3);
+    try std.testing.expectEqual(@as(i32, 10), topk.distances[0]);
+    try std.testing.expectEqual(@as(i32, 20), topk.distances[1]);
+    try std.testing.expectEqual(@as(i32, 30), topk.distances[2]);
+
+    topk.insert(40, 4);
+    topk.insert(50, 5);
+    topk.insert(25, 6);
+    try std.testing.expectEqual(@as(i32, 10), topk.distances[0]);
+    try std.testing.expectEqual(@as(i32, 20), topk.distances[1]);
+    try std.testing.expectEqual(@as(i32, 25), topk.distances[2]);
+    try std.testing.expectEqual(@as(i32, 30), topk.distances[3]);
+    try std.testing.expectEqual(@as(i32, 40), topk.distances[4]);
 }
 
 test "shouldSampleStats samples each 64 requests" {
