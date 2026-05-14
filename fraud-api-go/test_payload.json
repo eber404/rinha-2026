@@ -1,0 +1,23 @@
+{
+  "transaction": {
+    "amount": 2508.13,
+    "installments": 7,
+    "requested_at": "2026-03-11T03:45:53Z"
+  },
+  "customer": {
+    "avg_amount": 209.74,
+    "tx_count_24h": 13,
+    "known_merchants": ["MERC-003", "MERC-016"]
+  },
+  "merchant": {
+    "id": "MERC-089",
+    "mcc": "7801",
+    "avg_amount": 25.15
+  },
+  "terminal": {
+    "is_online": false,
+    "card_present": true,
+    "km_from_home": 667.7296579973
+  },
+  "last_transaction": null
+}

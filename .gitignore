@@ -69,3 +69,5 @@ fraud-api/vector-index/normalization.json
 fraud-api/vector-index/mcc_risk.json
 
 docs
+
+worktrees

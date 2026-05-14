@@ -3,19 +3,14 @@ services:
     image: ziglings/ziglang:latest
     container_name: preprocess
     working_dir: /workspace
-    command: ["/workspace/fraud-api/scripts/preprocess-container.sh"]
+    command: ['/workspace/fraud-api/scripts/preprocess-container.sh']
     volumes:
       - ./:/workspace
 
   api-1: &api
     container_name: api-1
-    image: ziglings/ziglang:latest
-    working_dir: /workspace
-    command:
-      - sh
-      - -lc
-      - >-
-        exec /workspace/fraud-api/main
+    image: fraud-api-go:local
+    working_dir: /app
     volumes:
       - ./:/workspace
       - ./fraud-api/vector-index:/data/vector-index:rw
@@ -28,19 +23,20 @@ services:
         condition: service_completed_successfully
     environment:
       - INSTANCE_ID=1
-      - API_WORKERS=2
+      - API_WORKERS=8
+    command:
+      - /app/main
     deploy:
       resources:
         limits:
-          cpus: '0.55'
-          memory: '143MB'
+          cpus: '2.0'
+          memory: '512MB'
 
   api-2:
     <<: *api
     container_name: api-2
     environment:
       - INSTANCE_ID=2
-      - API_WORKERS=2
 
   lb-zig:
     image: ziglings/ziglang:latest
@@ -49,8 +45,7 @@ services:
     command:
       - sh
       - -lc
-      - >-
-        exec /workspace/lb-zig/main
+      - exec /workspace/lb-zig/main
     ports:
       - '9999:9999'
     depends_on:
@@ -64,8 +59,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.40'
-          memory: '64MB'
+          cpus: '1.0'
+          memory: '128MB'
 
 networks:
   rinha-net:
