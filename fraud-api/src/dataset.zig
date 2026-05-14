@@ -3,7 +3,7 @@ const linux = std.os.linux;
 
 const PAGE_SIZE: usize = 4096;
 
-const VECTORS_SIZE = 48000000;
+const VECTORS_SIZE = 96000000;
 const LABELS_SIZE = 3000000;
 const CENTROIDS_SIZE = 4096;
 const CLUSTER_OFFSETS_SIZE = 2048;
@@ -78,7 +78,7 @@ inline fn toO(_: []const u8) linux.O {
 
     pub fn load(d: *Dataset, data_dir: []const u8) error{OpenFailed}!void {
         var vectors_path: [256:0]u8 = undefined;
-        const vectors_path_s = std.fmt.bufPrint(&vectors_path, "{s}/vectors_i8.bin", .{data_dir}) catch return error.OpenFailed;
+        const vectors_path_s = std.fmt.bufPrint(&vectors_path, "{s}/vectors_i16.bin", .{data_dir}) catch return error.OpenFailed;
         vectors_path[vectors_path_s.len] = 0;
         var labels_path: [256:0]u8 = undefined;
         const labels_path_s = std.fmt.bufPrint(&labels_path, "{s}/labels.bin", .{data_dir}) catch return error.OpenFailed;
@@ -123,7 +123,7 @@ inline fn toO(_: []const u8) linux.O {
         d.scales_mmap = mmapFile(d.scales_fd, SCALES_SIZE) orelse return error.OpenFailed;
         d.offsets_mmap = mmapFile(d.offsets_fd, OFFSETS_SIZE) orelse return error.OpenFailed;
 
-        if (d.vectors_mmap.len % 16 != 0) return error.OpenFailed;
+        if (d.vectors_mmap.len % 32 != 0) return error.OpenFailed;
         if (d.centroids_mmap.len % 16 != 0) return error.OpenFailed;
         if (d.cluster_offsets_mmap.len % 8 != 0) return error.OpenFailed;
         if (d.scales_mmap.len != 56) return error.OpenFailed;
@@ -160,11 +160,12 @@ inline fn toO(_: []const u8) linux.O {
         d.* = Dataset{};
     }
 
-    pub fn vectorAt(d: *const Dataset, idx: u32, dim: u8) i8 {
+    pub fn vectorAt(d: *const Dataset, idx: u32, dim: u8) i16 {
         if (d.vectors_mmap.len == 0) return 0;
-        const offset = @as(u64, idx) * 16 + @as(u64, dim);
-        if (offset >= d.vectors_mmap.len) return 0;
-        return @as(i8, @bitCast(d.vectors_mmap[offset]));
+        const offset = @as(u64, idx) * 32 + @as(u64, dim) * 2;
+        if (offset + 1 >= d.vectors_mmap.len) return 0;
+        const raw = @as(u16, d.vectors_mmap[offset]) | (@as(u16, d.vectors_mmap[offset + 1]) << 8);
+        return @as(i16, @bitCast(raw));
     }
 
     pub fn labelAt(d: *const Dataset, idx: u32) u8 {

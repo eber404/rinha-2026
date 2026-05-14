@@ -2,7 +2,7 @@ const std = @import("std");
 const payload = @import("payload.zig");
 
 pub const Features = payload.Features;
-pub const QueryVector = [16]i8;
+pub const QueryVector = [16]i16;
 
 const MAX_AMOUNT: f32 = 10_000.0;
 const MAX_INSTALLMENTS: f32 = 12.0;
@@ -12,11 +12,11 @@ const MAX_KM: f32 = 1_000.0;
 const MAX_TX_COUNT_24H: f32 = 20.0;
 const MAX_MERCHANT_AVG_AMOUNT: f32 = 10_000.0;
 
-fn quantizeDim(value: f32, scale: f32, offset: f32) i8 {
+fn quantizeDim(value: f32, scale: f32, offset: f32) i16 {
     const normalized = (value - offset) / scale;
-    const quantized: i32 = @intFromFloat(std.math.round(normalized * 127.0));
-    const clamped = std.math.clamp(quantized, @as(i32, -128), @as(i32, 127));
-    return @as(i8, @intCast(clamped));
+    const quantized: i32 = @intFromFloat(std.math.round(normalized * 32767.0));
+    const clamped = std.math.clamp(quantized, @as(i32, -32768), @as(i32, 32767));
+    return @as(i16, @intCast(clamped));
 }
 
 pub fn quantize(features: *const Features) QueryVector {

@@ -169,7 +169,29 @@ fn parseISODateDayOfWeek(s: []const u8) u8 {
     return @as(u8, @intCast(if (dow_sun0 == 0) 6 else dow_sun0 - 1));
 }
 
-fn parseISODateAll(buf: []const u8, i: *usize, hour: *u8, dow: *u8) void {
+fn daysFromCivil(year: i32, month: i32, day: i32) i64 {
+    var y = year;
+    const m = month;
+    y -= if (m <= 2) 1 else 0;
+    const era = @divFloor(y, 400);
+    const yoe = y - era * 400;
+    const mp = m + @as(i32, if (m > 2) -3 else 9);
+    const doy = @divTrunc(153 * mp + 2, 5) + day - 1;
+    const doe = yoe * 365 + @divTrunc(yoe, 4) - @divTrunc(yoe, 100) + doy;
+    return @as(i64, era) * 146097 + @as(i64, doe);
+}
+
+fn parseISODateMinutes(s: []const u8) i64 {
+    if (s.len < 16) return -1;
+    const year: i32 = @as(i32, (s[0] - '0')) * 1000 + @as(i32, (s[1] - '0')) * 100 + @as(i32, (s[2] - '0')) * 10 + @as(i32, (s[3] - '0'));
+    const month: i32 = @as(i32, (s[5] - '0')) * 10 + @as(i32, (s[6] - '0'));
+    const day: i32 = @as(i32, (s[8] - '0')) * 10 + @as(i32, (s[9] - '0'));
+    const hour: i32 = @as(i32, (s[11] - '0')) * 10 + @as(i32, (s[12] - '0'));
+    const minute: i32 = @as(i32, (s[14] - '0')) * 10 + @as(i32, (s[15] - '0'));
+    return daysFromCivil(year, month, day) * 1440 + @as(i64, hour * 60 + minute);
+}
+
+fn parseISODateAll(buf: []const u8, i: *usize, hour: *u8, dow: *u8, total_minutes: *i64) void {
     skipWhitespace(buf, i);
     if (i.* >= buf.len or buf[i.*] != '"') return;
     i.* += 1;
@@ -181,7 +203,19 @@ fn parseISODateAll(buf: []const u8, i: *usize, hour: *u8, dow: *u8) void {
         hour.* = @as(u8, (slice[11] - '0') * 10 + (slice[12] - '0'));
     }
     dow.* = parseISODateDayOfWeek(slice);
+    total_minutes.* = parseISODateMinutes(slice);
     if (i.* < buf.len) i.* += 1;
+}
+
+fn parseISODateMinutesValue(buf: []const u8, i: *usize) i64 {
+    skipWhitespace(buf, i);
+    if (i.* >= buf.len or buf[i.*] != '"') return -1;
+    i.* += 1;
+    const start = i.*;
+    while (i.* < buf.len and buf[i.*] != '"') i.* += 1;
+    const slice = buf[start..i.*];
+    if (i.* < buf.len) i.* += 1;
+    return parseISODateMinutes(slice);
 }
 
 fn hashId(s: []const u8) u32 {
@@ -201,6 +235,8 @@ pub fn parsePayload(body: []const u8) Features {
     var merchant_id_hash: u32 = 0;
     var known_hashes: [32]u32 = undefined;
     var known_count: usize = 0;
+    var requested_total_minutes: i64 = -1;
+    var last_total_minutes: i64 = -1;
 
     while (i < body.len) {
         skipWhitespace(body, &i);
@@ -240,7 +276,7 @@ pub fn parsePayload(body: []const u8) Features {
                 } else if (std.mem.eql(u8, key, "installments")) {
                     f.transaction_installments = parseI32(body, &i);
                 } else if (std.mem.eql(u8, key, "requested_at")) {
-                    parseISODateAll(body, &i, &f.transaction_hour, &f.transaction_day_of_week);
+                    parseISODateAll(body, &i, &f.transaction_hour, &f.transaction_day_of_week, &requested_total_minutes);
                 }
             } else if (ctx == Context.customer) {
                 if (std.mem.eql(u8, key, "avg_amount")) {
@@ -272,6 +308,7 @@ pub fn parsePayload(body: []const u8) Features {
                 } else if (std.mem.eql(u8, key, "mcc")) {
                     const mcc_str = parseStringValue(body, &i);
                     f.merchant_mcc = parseMccString(mcc_str);
+                    f.mcc_risk = mccRisk(f.merchant_mcc);
                 } else if (std.mem.eql(u8, key, "avg_amount")) {
                     f.merchant_avg_amount = @as(f32, @floatCast(parseNumber(body, &i)));
                 }
@@ -287,8 +324,8 @@ pub fn parsePayload(body: []const u8) Features {
                 }
             } else if (ctx == Context.last_transaction) {
                 f.has_last_transaction = true;
-                if (std.mem.eql(u8, key, "minutes")) {
-                    f.last_transaction_minutes = parseI32(body, &i);
+                if (std.mem.eql(u8, key, "timestamp")) {
+                    last_total_minutes = parseISODateMinutesValue(body, &i);
                 } else if (std.mem.eql(u8, key, "km_from_current")) {
                     f.last_transaction_km_from_current = @as(f32, @floatCast(parseNumber(body, &i)));
                 }
@@ -313,6 +350,10 @@ pub fn parsePayload(body: []const u8) Features {
         }
         f.merchant_unknown = !known;
     }
+    if (f.has_last_transaction and requested_total_minutes >= 0 and last_total_minutes >= 0) {
+        const delta = requested_total_minutes - last_total_minutes;
+        f.last_transaction_minutes = @as(i32, @intCast(@max(delta, 0)));
+    }
 
     return f;
 }
@@ -325,4 +366,20 @@ fn parseMccString(s: []const u8) u16 {
         }
     }
     return value;
+}
+
+fn mccRisk(mcc: u16) f32 {
+    return switch (mcc) {
+        5411 => 0.15,
+        5812 => 0.30,
+        5912 => 0.20,
+        5944 => 0.45,
+        7801 => 0.80,
+        7802 => 0.75,
+        7995 => 0.85,
+        4511 => 0.35,
+        5311 => 0.25,
+        5999 => 0.50,
+        else => 0.50,
+    };
 }

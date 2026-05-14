@@ -10,6 +10,7 @@ mkdir -p "$DATA_DIR"
 
 echo "=== Checking if index exists ==="
 if [ -f "$DATA_DIR/vectors_i8.bin" ] && \
+   [ -f "$DATA_DIR/vectors_i16.bin" ] && \
    [ -f "$DATA_DIR/labels.bin" ] && \
    [ -f "$DATA_DIR/centroids_i8.bin" ] && \
    [ -f "$DATA_DIR/cluster_offsets.bin" ] && \

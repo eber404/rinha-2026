@@ -12,6 +12,19 @@ fn quantizeSignedToByte(v: f32) u8 {
     return @bitCast(signed);
 }
 
+fn quantizeSignedToI16(v: f32) i16 {
+    var q: i32 = @intFromFloat(@round(v * 32767.0));
+    if (q > 32767) q = 32767;
+    if (q < -32768) q = -32768;
+    return @intCast(q);
+}
+
+fn writeI16Le(buf: []u8, value: i16) void {
+    const raw: u16 = @bitCast(value);
+    buf[0] = @as(u8, @intCast(raw & 0xff));
+    buf[1] = @as(u8, @intCast((raw >> 8) & 0xff));
+}
+
 fn writeU32Le(buf: []u8, value: u32) void {
     buf[0] = @as(u8, @intCast(value & 0xff));
     buf[1] = @as(u8, @intCast((value >> 8) & 0xff));
@@ -54,6 +67,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     var vectors_tmp = std.ArrayList(u8).initCapacity(allocator, 50_000 * PADDED_DIMS) catch return error.OutOfMemory;
+    var vectors_i16_tmp = std.ArrayList(u8).initCapacity(allocator, 50_000 * PADDED_DIMS * 2) catch return error.OutOfMemory;
     var labels = std.ArrayList(u8).initCapacity(allocator, 50_000) catch return error.OutOfMemory;
 
     var scanner = std.json.Scanner.initCompleteInput(allocator, content);
@@ -68,7 +82,9 @@ pub fn main(init: std.process.Init) !void {
         if (t != .object_begin) return error.InvalidJson;
 
         var vec14: [DIMS]u8 = undefined;
+        var vec14_i16: [DIMS]i16 = undefined;
         @memset(&vec14, 0);
+        @memset(&vec14_i16, 0);
         var label: u8 = 0;
 
         while (true) {
@@ -90,6 +106,7 @@ pub fn main(init: std.process.Init) !void {
                     if (i < DIMS) {
                         const fv = try tokenNumberToF32(vtok, content);
                         vec14[i] = quantizeSignedToByte(fv);
+                        vec14_i16[i] = quantizeSignedToI16(fv);
                     }
                     i += 1;
                 }
@@ -103,6 +120,13 @@ pub fn main(init: std.process.Init) !void {
         try vectors_tmp.resize(allocator, base + PADDED_DIMS);
         @memset(vectors_tmp.items[base .. base + PADDED_DIMS], 0);
         @memcpy(vectors_tmp.items[base .. base + DIMS], vec14[0..]);
+
+        const base_i16 = vectors_i16_tmp.items.len;
+        try vectors_i16_tmp.resize(allocator, base_i16 + PADDED_DIMS * 2);
+        @memset(vectors_i16_tmp.items[base_i16 .. base_i16 + PADDED_DIMS * 2], 0);
+        for (0..DIMS) |d| {
+            writeI16Le(vectors_i16_tmp.items[base_i16 + d * 2 .. base_i16 + d * 2 + 2], vec14_i16[d]);
+        }
     }
 
     const n = labels.items.len;
@@ -183,6 +207,7 @@ pub fn main(init: std.process.Init) !void {
     @memcpy(write_pos, cluster_offsets[0..NUM_CLUSTERS]);
 
     var vectors_out = try allocator.alloc(u8, n * PADDED_DIMS);
+    var vectors_i16_out = try allocator.alloc(u8, n * PADDED_DIMS * 2);
     var labels_out = try allocator.alloc(u8, n);
 
     for (0..n) |i| {
@@ -193,11 +218,18 @@ pub fn main(init: std.process.Init) !void {
         const src_base = i * PADDED_DIMS;
         const dst_base = @as(usize, pos) * PADDED_DIMS;
         @memcpy(vectors_out[dst_base .. dst_base + PADDED_DIMS], vectors_tmp.items[src_base .. src_base + PADDED_DIMS]);
+
+        const src_i16_base = i * PADDED_DIMS * 2;
+        const dst_i16_base = @as(usize, pos) * PADDED_DIMS * 2;
+        @memcpy(vectors_i16_out[dst_i16_base .. dst_i16_base + PADDED_DIMS * 2], vectors_i16_tmp.items[src_i16_base .. src_i16_base + PADDED_DIMS * 2]);
         labels_out[pos] = labels.items[i];
     }
 
     const vectors_path = try std.fmt.allocPrint(allocator, "{s}/vectors_i8.bin", .{data_dir});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = vectors_path, .data = vectors_out });
+
+    const vectors_i16_path = try std.fmt.allocPrint(allocator, "{s}/vectors_i16.bin", .{data_dir});
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = vectors_i16_path, .data = vectors_i16_out });
 
     const labels_path = try std.fmt.allocPrint(allocator, "{s}/labels.bin", .{data_dir});
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = labels_path, .data = labels_out });
