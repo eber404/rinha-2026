@@ -8,13 +8,11 @@ services:
       - ./:/workspace
 
   api-1: &api
-    image: oven/bun:canary
+    build:
+      context: fraud-api
     container_name: api-1
     working_dir: /app
-    command:
-      - sh
-      - -c
-      - bun run build-native && exec bun run src/index.ts
+    command: ["bun", "run", "src/index.ts"]
     volumes:
       - ./fraud-api:/app
       - ./vector-index:/data/vector-index:ro
