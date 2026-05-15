@@ -11,10 +11,13 @@ services:
     image: oven/bun:canary
     container_name: api-1
     working_dir: /app
-    command: ["bun", "run", "--watch", "src/index.ts"]
+    command:
+      - sh
+      - -c
+      - bun run build-native && exec bun run src/index.ts
     volumes:
       - ./fraud-api:/app
-      - ./vector-index:/data:ro
+      - ./vector-index:/data/vector-index:ro
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
