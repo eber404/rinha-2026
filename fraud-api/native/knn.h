@@ -22,12 +22,14 @@ struct Dataset {
 
 class KNNEngine {
 public:
+    KNNEngine() = default;
+    ~KNNEngine();
     bool load(const char* dataset_path, const char* labels_path, const char* index_path);
     int search(const float* query, int k, uint32_t* out_indices, float* out_distances, uint8_t* out_labels) const;
 
 private:
     Dataset dataset_;
     IVFIndex ivf_;
-    std::vector<float> vector_buf_;
-    std::vector<uint8_t> label_buf_;
+    size_t dataset_size_ = 0;
+    size_t labels_size_ = 0;
 };
