@@ -45,4 +45,4 @@ make benchmark
 
 ## Official test
 
-`make benchmark` clones or updates `zanfranceschi/rinha-de-backend-2026` and runs the official test engine.
+`make benchmark` runs the official test engine from `.cache/rinha-official/run.sh`. Ensure the official repo is already cloned there.
