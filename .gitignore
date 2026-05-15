@@ -1,73 +1,30 @@
-.zig-cache/
-zig-out/
-**/.zig-cache/
-**/zig-out/
+# Project meta
+.agents/
+.cache/
+init.md
 
-*.o
-*.exe
-main
-load-balancer/main
-fraud-api/main
+# Old artifacts
+load-balancer/build/
+fraud-api/dist/
+vector-index/
 
-# Dependencies
+# Node
 node_modules/
 
-# Environment
-.env
-.env.local
+# Zig artifacts (legacy)
+.zig-cache/
+zig-out/
+
+# IDE
+.vscode/
+.idea/
 
 # OS
 .DS_Store
-*.swp
-*.swo
 
-# Docker/logs
-*.log
+# Benchmarks
+.benchmarks/
+artifacts/
 
-# Coverage/cache
-coverage/
-.cache/
-
-# Generated data
-fraud-engine/vector-index/*.bin
-fraud-engine/vector-index/refs.bin
-fraud-engine/vector-index/references.json
-fraud-engine/vector-index/normalization.json
-fraud-engine/vector-index/mcc_risk.json
-shared/vector-index/
-shared/sockets/
-
-# Test artifacts
-artifacts/rinha-official-result.json
-
-# Tooling
-.agents/
-.opencode/
-opencode.json
-.ralph/
-.artifacts
-docs
-benchmarks*.o
-*.obj
-*.exe
-main_debug
-main_native
-main_lb
-.zig-cache/
-zig-out/
-main_debug
-main_native
-main_lb
-
-.benchmarks
-
-# local generated dataset
-fraud-api/vector-index/references.json
-fraud-api/scripts/vector_indexer
-fraud-api/vector-index/*.bin
-fraud-api/vector-index/normalization.json
-fraud-api/vector-index/mcc_risk.json
-
-docs
-
-worktrees
+# Worktrees
+.worktrees/
