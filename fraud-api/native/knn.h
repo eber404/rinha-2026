@@ -24,6 +24,10 @@ class KNNEngine {
 public:
     KNNEngine() = default;
     ~KNNEngine();
+    KNNEngine(const KNNEngine&) = delete;
+    KNNEngine& operator=(const KNNEngine&) = delete;
+    KNNEngine(KNNEngine&&) = delete;
+    KNNEngine& operator=(KNNEngine&&) = delete;
     bool load(const char* dataset_path, const char* labels_path, const char* index_path);
     int search(const float* query, int k, uint32_t* out_indices, float* out_distances, uint8_t* out_labels) const;
 
