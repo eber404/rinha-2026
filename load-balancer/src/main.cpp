@@ -19,6 +19,8 @@ struct Conn {
     int client_fd = -1;
     int backend_fd = -1;
     bool connecting = false;
+    bool client_eof = false;
+    bool backend_eof = false;
     char c2b[BUF_SIZE];
     size_t c2b_len = 0;
     char b2c[BUF_SIZE];
@@ -53,7 +55,7 @@ static int create_listen_socket() {
     return fd;
 }
 
-static int connect_backend() {
+static int connect_backend(bool& out_in_progress) {
     int n = sizeof(backends) / sizeof(backends[0]);
     for (int i = 0; i < n; ++i) {
         int idx = (next_backend + i) % n;
@@ -63,12 +65,18 @@ static int connect_backend() {
         addr.sun_family = AF_UNIX;
         strncpy(addr.sun_path, backends[idx], sizeof(addr.sun_path) - 1);
         int r = connect(fd, (sockaddr*)&addr, sizeof(addr));
-        if (r == 0 || errno == EINPROGRESS) {
+        if (r == 0) {
+            out_in_progress = false;
+            next_backend = (idx + 1) % n;
+            return fd;
+        } else if (errno == EINPROGRESS) {
+            out_in_progress = true;
             next_backend = (idx + 1) % n;
             return fd;
         }
         close(fd);
     }
+    out_in_progress = false;
     return -1;
 }
 
@@ -78,39 +86,41 @@ static void close_conn(Conn& c) {
     c.client_fd = -1;
     c.backend_fd = -1;
     c.connecting = false;
+    c.client_eof = false;
+    c.backend_eof = false;
     c.c2b_len = 0;
     c.b2c_len = 0;
 }
 
 // Read from from_fd, write to to_fd. If write blocks, buffer in buf/len.
-// Returns true if connection should close (error or EOF).
-static bool forward(int from_fd, int to_fd, char* buf, size_t& len) {
+// Returns: 0 = ok, 1 = EOF, -1 = error.
+static int forward(int from_fd, int to_fd, char* buf, size_t& len) {
     char temp[BUF_SIZE];
     ssize_t r = read(from_fd, temp, sizeof(temp));
     if (r < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return false;
-        return true;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        return -1;
     }
-    if (r == 0) return true;
+    if (r == 0) return 1;
 
     if (len > 0) {
         ssize_t w = write(to_fd, buf, len);
         if (w < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                if (len + (size_t)r > BUF_SIZE) return true;
+                if (len + (size_t)r > BUF_SIZE) return -1;
                 memcpy(buf + len, temp, r);
                 len += r;
-                return false;
+                return 0;
             }
-            return true;
+            return -1;
         }
         if ((size_t)w < len) {
             memmove(buf, buf + w, len - w);
             len -= w;
-            if (len + (size_t)r > BUF_SIZE) return true;
+            if (len + (size_t)r > BUF_SIZE) return -1;
             memcpy(buf + len, temp, r);
             len += r;
-            return false;
+            return 0;
         }
         len = 0;
     }
@@ -118,21 +128,21 @@ static bool forward(int from_fd, int to_fd, char* buf, size_t& len) {
     ssize_t w = write(to_fd, temp, r);
     if (w < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            if ((size_t)r > BUF_SIZE) return true;
+            if ((size_t)r > BUF_SIZE) return -1;
             memcpy(buf, temp, r);
             len = r;
-            return false;
+            return 0;
         }
-        return true;
+        return -1;
     }
     if ((size_t)w < (size_t)r) {
         size_t rem = r - w;
-        if (rem > BUF_SIZE) return true;
+        if (rem > BUF_SIZE) return -1;
         memcpy(buf, temp + w, rem);
         len = rem;
-        return false;
+        return 0;
     }
-    return false;
+    return 0;
 }
 
 // Drain buffered data to to_fd. Returns true on error.
@@ -167,11 +177,17 @@ int main() {
 
         for (int i = 0; i < num_conns; ++i) {
             Conn& c = conns[i];
-            short bev = c.connecting ? POLLOUT : POLLIN;
-            if (c.c2b_len > 0) bev |= POLLOUT;
+            short bev = 0;
+            if (c.connecting) {
+                bev = POLLOUT;
+            } else {
+                if (!c.backend_eof) bev |= POLLIN;
+                if (c.c2b_len > 0) bev |= POLLOUT;
+            }
             fds[nfds++] = {c.backend_fd, bev, 0};
 
-            short cev = POLLIN;
+            short cev = 0;
+            if (!c.client_eof) cev |= POLLIN;
             if (c.b2c_len > 0) cev |= POLLOUT;
             fds[nfds++] = {c.client_fd, cev, 0};
         }
@@ -187,7 +203,8 @@ int main() {
             int client_fd = accept(listen_fd, nullptr, nullptr);
             if (client_fd >= 0) {
                 set_nonblock(client_fd);
-                int backend_fd = connect_backend();
+                bool in_progress = false;
+                int backend_fd = connect_backend(in_progress);
                 if (backend_fd < 0 || num_conns >= MAX_CONNS) {
                     close(client_fd);
                     if (backend_fd >= 0) close(backend_fd);
@@ -195,9 +212,7 @@ int main() {
                     Conn& c = conns[num_conns++];
                     c.client_fd = client_fd;
                     c.backend_fd = backend_fd;
-                    int err = 0;
-                    socklen_t len = sizeof(err);
-                    c.connecting = !(getsockopt(backend_fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0);
+                    c.connecting = in_progress;
                 }
             }
         }
@@ -219,20 +234,33 @@ int main() {
                 }
             }
 
-            if (!c.connecting) {
-                if (!close_it && (bev & POLLOUT) && c.c2b_len > 0) {
+            if (!c.connecting && !close_it) {
+                if (c.c2b_len > 0) {
                     if (drain_buf(c.backend_fd, c.c2b, c.c2b_len)) close_it = true;
                 }
-                if (!close_it && (cev & POLLOUT) && c.b2c_len > 0) {
+                if (!close_it && c.b2c_len > 0) {
                     if (drain_buf(c.client_fd, c.b2c, c.b2c_len)) close_it = true;
                 }
-                if (!close_it && (bev & POLLIN)) {
-                    if (forward(c.backend_fd, c.client_fd, c.b2c, c.b2c_len)) close_it = true;
+
+                if (!close_it && !c.backend_eof && (bev & POLLIN)) {
+                    int rc = forward(c.backend_fd, c.client_fd, c.b2c, c.b2c_len);
+                    if (rc == 1) c.backend_eof = true;
+                    else if (rc < 0) close_it = true;
                 }
-                if (!close_it && (cev & POLLIN)) {
-                    if (forward(c.client_fd, c.backend_fd, c.c2b, c.c2b_len)) close_it = true;
+                if (!close_it && !c.client_eof && (cev & POLLIN)) {
+                    int rc = forward(c.client_fd, c.backend_fd, c.c2b, c.c2b_len);
+                    if (rc == 1) c.client_eof = true;
+                    else if (rc < 0) close_it = true;
                 }
-                if (!close_it && ((bev & (POLLERR | POLLHUP)) || (cev & (POLLERR | POLLHUP)))) {
+
+                if (!close_it && !c.backend_eof && (bev & (POLLERR | POLLHUP))) {
+                    c.backend_eof = true;
+                }
+                if (!close_it && !c.client_eof && (cev & (POLLERR | POLLHUP))) {
+                    c.client_eof = true;
+                }
+
+                if (!close_it && c.client_eof && c.backend_eof && c.c2b_len == 0 && c.b2c_len == 0) {
                     close_it = true;
                 }
             }
