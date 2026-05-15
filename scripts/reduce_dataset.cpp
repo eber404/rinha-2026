@@ -91,7 +91,7 @@ int main() {
     std::mt19937 rng(42);
     std::vector<Vector> reduced;
     for (int c = 0; c < N_CLUSTERS; ++c) {
-        size_t keep = std::max((size_t)5, (size_t)(lists[c].size() * 0.10));
+        size_t keep = std::max(static_cast<size_t>(5), static_cast<size_t>(lists[c].size() * 0.10));
         if (keep > lists[c].size()) keep = lists[c].size();
         std::shuffle(lists[c].begin(), lists[c].end(), rng);
         for (size_t i = 0; i < keep; ++i) {
@@ -105,14 +105,14 @@ int main() {
         check_fwrite(std::fwrite(vec.v, sizeof(float), DIMS, rfv), DIMS,
                      "vector-index/dataset_reduced.bin fwrite");
     }
-    std::fclose(rfv);
+    if (std::fclose(rfv) != 0) die("vector-index/dataset_reduced.bin: fclose failed");
 
     FILE* rfl = safe_fopen("vector-index/labels_reduced.bin", "wb");
     for (const auto& vec : reduced) {
         if (std::fputc(vec.label, rfl) == EOF)
             die("vector-index/labels_reduced.bin: fputc failed");
     }
-    std::fclose(rfl);
+    if (std::fclose(rfl) != 0) die("vector-index/labels_reduced.bin: fclose failed");
 
     // Build reduced IVF index (re-cluster reduced set into 512 clusters)
     std::vector<float> rcents(N_CLUSTERS * DIMS);
@@ -173,7 +173,7 @@ int main() {
                  static_cast<size_t>(N_CLUSTERS) * DIMS,
                  "vector-index/ivf_index_reduced.bin centroids fwrite");
     for (int c = 0; c < N_CLUSTERS; ++c) {
-        uint32_t cnt = (uint32_t)rlists[c].size();
+        uint32_t cnt = static_cast<uint32_t>(rlists[c].size());
         check_fwrite(std::fwrite(&cnt, sizeof(uint32_t), 1, rfi), 1,
                      "vector-index/ivf_index_reduced.bin count fwrite");
         if (cnt) {
@@ -181,7 +181,7 @@ int main() {
                          "vector-index/ivf_index_reduced.bin list fwrite");
         }
     }
-    std::fclose(rfi);
+    if (std::fclose(rfi) != 0) die("vector-index/ivf_index_reduced.bin: fclose failed");
 
     std::fprintf(stderr, "Reduced dataset: %zu vectors (%.1f%%)\n", reduced.size(), 100.0 * reduced.size() / n);
     return 0;
