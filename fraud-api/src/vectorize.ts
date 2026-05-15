@@ -56,7 +56,7 @@ export function vectorize(payload: Payload): Float32Array {
     vec[4] = reqDate.getUTCDay() / 6.0;
   }
 
-  if (payload.last_transaction) {
+  if (payload.last_transaction && !isNaN(reqDate.getTime())) {
     const lastDate = new Date(payload.last_transaction.timestamp);
     if (isNaN(lastDate.getTime())) {
       vec[5] = -1;
