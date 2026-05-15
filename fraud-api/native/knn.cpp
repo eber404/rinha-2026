@@ -40,6 +40,10 @@ KNNEngine::~KNNEngine() {
 }
 
 bool KNNEngine::load(const char* dataset_path, const char* labels_path, const char* index_path) {
+    // Clean up any previously loaded data to avoid leaks on re-load
+    this->~KNNEngine();
+    new (this) KNNEngine();
+
     const void* dptr = nullptr;
     size_t dsize = 0;
     if (!mmap_file(dataset_path, &dptr, &dsize)) return false;
@@ -59,8 +63,8 @@ bool KNNEngine::load(const char* dataset_path, const char* labels_path, const ch
     if (fread(header, sizeof(int), 2, f) != 2) { fclose(f); return false; }
     ivf_.n_clusters = header[0];
     ivf_.dims = header[1];
-    assert(ivf_.dims == KNN_DIMS);
-    if (ivf_.n_clusters > 512) { fclose(f); return false; }
+    if (ivf_.dims != KNN_DIMS) { fclose(f); return false; }
+    if (ivf_.n_clusters <= 0 || ivf_.n_clusters > 512) { fclose(f); return false; }
     ivf_.centroids.resize(ivf_.n_clusters * ivf_.dims);
     if (fread(ivf_.centroids.data(), sizeof(float), ivf_.centroids.size(), f) != ivf_.centroids.size()) { fclose(f); return false; }
     ivf_.lists.resize(ivf_.n_clusters);
@@ -84,7 +88,8 @@ int KNNEngine::search(const float* query, int k, uint32_t* out_indices, float* o
     for (int c = 0; c < ivf_.n_clusters; ++c) {
         cdists[c] = {c, l2_sq(query, &ivf_.centroids[c * ivf_.dims], ivf_.dims)};
     }
-    std::partial_sort(cdists.begin(), cdists.begin() + KNN_NPROBE, cdists.begin() + ivf_.n_clusters,
+    int n_probe = std::min(KNN_NPROBE, ivf_.n_clusters);
+    std::partial_sort(cdists.begin(), cdists.begin() + n_probe, cdists.begin() + ivf_.n_clusters,
                       [](const ClusterDist& a, const ClusterDist& b) { return a.dist < b.dist; });
 
     // Brute-force within NPROBE clusters, keep top-k
@@ -104,10 +109,10 @@ int KNNEngine::search(const float* query, int k, uint32_t* out_indices, float* o
         }
     };
 
-    for (int i = 0; i < KNN_NPROBE; ++i) {
+    for (int i = 0; i < n_probe; ++i) {
         int c = cdists[i].id;
         for (uint32_t id : ivf_.lists[c]) {
-            assert(id < dataset_.count);
+            if (id >= dataset_.count) continue; // skip out-of-range IDs
             float dist = l2_sq(query, &dataset_.vectors[id * KNN_DIMS], KNN_DIMS);
             insert(id, dist, dataset_.labels[id]);
         }
