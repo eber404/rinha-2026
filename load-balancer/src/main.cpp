@@ -3,14 +3,15 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <poll.h>
 
 static constexpr int LISTEN_PORT = 9999;
 static constexpr int BACKLOG = 4096;
@@ -22,7 +23,7 @@ struct Backend {
 };
 
 static int create_server_socket(int port) {
-    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     int opt = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -45,29 +46,25 @@ static int connect_uds(const char* path) {
     return fd;
 }
 
-static void relay(int client_fd, int backend_fd) {
+static void copy_stream(int from_fd, int to_fd) {
     char buf[BUF_SIZE];
-    struct pollfd fds[2];
-    fds[0].fd = client_fd; fds[0].events = POLLIN;
-    fds[1].fd = backend_fd; fds[1].events = POLLIN;
-    while (true) {
-        int n = poll(fds, 2, -1);
-        if (n < 0) break;
-        if (fds[0].revents & POLLIN) {
-            ssize_t r = read(client_fd, buf, sizeof(buf));
-            if (r <= 0) break;
-            ssize_t w = write(backend_fd, buf, r);
-            if (w < 0) break;
+    ssize_t r;
+    while ((r = read(from_fd, buf, sizeof(buf))) > 0) {
+        char* p = buf;
+        while (r > 0) {
+            ssize_t w = write(to_fd, p, r);
+            if (w < 0) return;
+            p += w;
+            r -= w;
         }
-        if (fds[1].revents & POLLIN) {
-            ssize_t r = read(backend_fd, buf, sizeof(buf));
-            if (r <= 0) break;
-            ssize_t w = write(client_fd, buf, r);
-            if (w < 0) break;
-        }
-        if (fds[0].revents & (POLLERR|POLLHUP)) break;
-        if (fds[1].revents & (POLLERR|POLLHUP)) break;
     }
+}
+
+static void relay(int client_fd, int backend_fd) {
+    std::thread t1(copy_stream, client_fd, backend_fd);
+    std::thread t2(copy_stream, backend_fd, client_fd);
+    t1.join();
+    t2.join();
 }
 
 int main(int argc, char** argv) {
@@ -83,13 +80,15 @@ int main(int argc, char** argv) {
     }
     fprintf(stderr, "LB listening on :%d\n", LISTEN_PORT);
 
+    signal(SIGPIPE, SIG_IGN);
+
     size_t next_backend = 0;
     while (true) {
         sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept4(listen_fd, (sockaddr*)&client_addr, &client_len, SOCK_NONBLOCK);
+        int client_fd = accept(listen_fd, (sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) {
-            if (errno == EAGAIN || errno == EINTR) continue;
+            if (errno == EINTR) continue;
             perror("accept");
             continue;
         }
