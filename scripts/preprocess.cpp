@@ -7,15 +7,11 @@
 #include <algorithm>
 #include <random>
 #include <zlib.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
+// No mmap needed in preprocessing — we write sequentially
 
 static constexpr int DIMS = 14;
 static constexpr int N_CLUSTERS = 512;
-static constexpr int NPROBE = 16;
-static constexpr int K = 5;
+// NPROBE and K are search-time parameters, not used during preprocessing
 
 struct Vector {
     float v[DIMS];
@@ -54,10 +50,12 @@ static std::vector<Vector> parse_json(const std::string& json) {
         if (p >= end) break;
         ++p;
         Vector vec{};
+        char* endptr = const_cast<char*>(p);
         for (int i = 0; i < DIMS; ++i) {
-            vec.v[i] = (float)strtod(p, (char**)&p);
-            while (p < end && (*p == ' ' || *p == ',')) ++p;
+            vec.v[i] = (float)strtod(endptr, &endptr);
+            while (endptr < end && (*endptr == ' ' || *endptr == ',')) ++endptr;
         }
+        p = endptr;
         const char* label_start = (const char*)memmem(p, end - p, "\"label\":", 8);
         if (!label_start) break;
         p = label_start + 8;
@@ -127,28 +125,36 @@ int main(int argc, char** argv) {
         lists[best_c].push_back((uint32_t)i);
     }
 
+    auto safe_fopen = [](const char* path, const char* mode) -> FILE* {
+        FILE* f = fopen(path, mode);
+        if (!f) { fprintf(stderr, "Failed to open %s\n", path); exit(1); }
+        return f;
+    };
+    auto safe_fwrite = [](const void* ptr, size_t size, size_t n, FILE* f, const char* desc) {
+        if (fwrite(ptr, size, n, f) != n) { fprintf(stderr, "Failed to write %s\n", desc); exit(1); }
+    };
+
     // Write vectors
-    FILE* fv = fopen("vector-index/dataset.bin", "wb");
-    for (const auto& vec : data) fwrite(vec.v, sizeof(float), DIMS, fv);
+    FILE* fv = safe_fopen("vector-index/dataset.bin", "wb");
+    for (const auto& vec : data) safe_fwrite(vec.v, sizeof(float), DIMS, fv, "dataset");
     fclose(fv);
 
     // Write labels
-    FILE* fl = fopen("vector-index/labels.bin", "wb");
-    for (const auto& vec : data) fputc(vec.label, fl);
+    FILE* fl = safe_fopen("vector-index/labels.bin", "wb");
+    for (const auto& vec : data) {
+        if (fputc(vec.label, fl) == EOF) { fprintf(stderr, "Failed to write label\n"); exit(1); }
+    }
     fclose(fl);
 
     // Write IVF index
-    FILE* fi = fopen("vector-index/ivf_index.bin", "wb");
-    // Header: n_clusters, dims
+    FILE* fi = safe_fopen("vector-index/ivf_index.bin", "wb");
     int header[2] = {N_CLUSTERS, DIMS};
-    fwrite(header, sizeof(int), 2, fi);
-    // Centroids
-    fwrite(centroids, sizeof(float), N_CLUSTERS * DIMS, fi);
-    // Posting lists: count + ids
+    safe_fwrite(header, sizeof(int), 2, fi, "header");
+    safe_fwrite(centroids, sizeof(float), N_CLUSTERS * DIMS, fi, "centroids");
     for (int c = 0; c < N_CLUSTERS; ++c) {
         uint32_t cnt = (uint32_t)lists[c].size();
-        fwrite(&cnt, sizeof(uint32_t), 1, fi);
-        if (cnt) fwrite(lists[c].data(), sizeof(uint32_t), cnt, fi);
+        safe_fwrite(&cnt, sizeof(uint32_t), 1, fi, "list count");
+        if (cnt) safe_fwrite(lists[c].data(), sizeof(uint32_t), cnt, fi, "list ids");
     }
     fclose(fi);
 
