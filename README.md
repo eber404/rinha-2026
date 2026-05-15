@@ -1,29 +1,31 @@
-# Rinha 2026 - Fraud Detection
+# Rinha 2026 — Fraud Detection via Vector Search
 
 Monorepo for Rinha de Backend 2026.
 
 ## Stack
 
-- **Load Balancer**: Zig (`load-balancer/src/main.zig`)
-- **API**: Go (`server/cmd/server`) + Zig core (`fraud-engine/src/*.zig`)
-- **Preprocessing**: Zig, runs at container build time
+- **Load Balancer**: C++ (`load-balancer/src/main.cpp`) — TCP:9999 → UDS round-robin
+- **Fraud API**: Bun (`fraud-api/src/index.ts`) — HTTP/UDS + JSON parse + vectorize + C++ IVF KNN addon
+- **Preprocessing**: C++ (`scripts/preprocess.cpp`) — generates binary dataset + IVF index at build time
 
 ## Structure
 
 ```
-load-balancer/   # Zig LB (TCP:9999 -> UDS)
-                 # - src/main.zig
-                 # - nginx.conf
-server/          # Go API (HTTP/UDS + partial parser + cgo bridge)
-fraud-engine/    # Zig core scorer + preprocessing/index generation
-                 # - src/*.zig
-                 # - vector-index/ (binary index files)
-                 # - scripts/pre-processing.sh
-shared/
-  sockets/       # UDS socket files
+load-balancer/   # C++ LB (TCP:9999 -> UDS)
+                 # - src/main.cpp
+                 # - Dockerfile
+fraud-api/       # Bun API (HTTP + parser + scoring)
+                 # - src/index.ts
+                 # - src/vectorize.ts
+                 # - native/knn.cpp knn.h binding.cpp
+                 # - package.json
+scripts/         # Preprocessing and dataset reduction
+                 # - preprocess.cpp
+                 # - reduce_dataset.cpp
+                 # - preprocess.sh
+vector-index/    # Generated binary files (gitignored)
 docker-compose.yml
-artifacts/        # local benchmark/test results
-docs/            # plans and notes
+Makefile
 ```
 
 ## Endpoints
@@ -35,7 +37,7 @@ docs/            # plans and notes
 
 ```bash
 # Start local stack (with hot-reload)
-docker-compose up --build
+docker compose up --build
 
 # Run official Rinha test
 make benchmark
@@ -43,10 +45,4 @@ make benchmark
 
 ## Official test
 
-`make benchmark` does:
-
-1. Clones (or updates) `zanfranceschi/rinha-de-backend-2026` into `.cache/rinha-official`
-2. Runs `./run.sh` in the official repository
-3. Copies `test/results.json` to `artifacts/rinha-official-result.json`
-
-> `artifacts/rinha-official-result.json` is saved for local inspection and ignored by Git.
+`make benchmark` clones or updates `zanfranceschi/rinha-de-backend-2026` and runs the official test engine.
