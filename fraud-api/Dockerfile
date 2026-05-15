@@ -6,7 +6,7 @@ RUN mkdir -p native/build && g++ -O3 -std=c++20 -fPIC -shared -o native/build/kn
 
 FROM oven/bun:canary
 WORKDIR /app
-COPY package.json tsconfig.json ./
+COPY package.json tsconfig.json bun.lock ./
 COPY src/ ./src/
 COPY --from=builder /build/native/build/knn.so ./native/build/knn.so
 RUN bun install
