@@ -1,36 +1,33 @@
 services:
   preprocess:
-    image: ziglings/ziglang:latest
+    image: gcc:13-bookworm
     container_name: preprocess
     working_dir: /workspace
-    command: ['/workspace/fraud-api/scripts/preprocess-container.sh']
+    command: ["/workspace/scripts/preprocess.sh"]
     volumes:
       - ./:/workspace
 
   api-1: &api
+    image: oven/bun:canary
     container_name: api-1
-    image: fraud-api-go:local
     working_dir: /app
+    command: ["bun", "run", "--watch", "src/index.ts"]
     volumes:
-      - ./:/workspace
-      - ./fraud-api/vector-index:/data/vector-index:rw
+      - ./fraud-api:/app
+      - ./vector-index:/data:ro
       - rinha-sockets:/tmp/rinha
     networks:
       - rinha-net
-    restart: on-failure
     depends_on:
       preprocess:
         condition: service_completed_successfully
     environment:
       - INSTANCE_ID=1
-      - API_WORKERS=8
-    command:
-      - /app/main
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: '512MB'
+          cpus: '0.35'
+          memory: '128MB'
 
   api-2:
     <<: *api
@@ -38,29 +35,24 @@ services:
     environment:
       - INSTANCE_ID=2
 
-  lb-zig:
-    image: ziglings/ziglang:latest
-    container_name: lb-zig
-    working_dir: /workspace
-    command:
-      - sh
-      - -lc
-      - exec /workspace/lb-zig/main
+  lb:
+    build:
+      context: load-balancer
+    container_name: lb
     ports:
       - '9999:9999'
+    volumes:
+      - rinha-sockets:/tmp/rinha
+    networks:
+      - rinha-net
     depends_on:
       - api-1
       - api-2
-    volumes:
-      - ./:/workspace
-      - rinha-sockets:/tmp/rinha
-    security_opt:
-      - seccomp:unconfined
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: '128MB'
+          cpus: '0.15'
+          memory: '64MB'
 
 networks:
   rinha-net:
