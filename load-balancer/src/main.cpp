@@ -260,7 +260,7 @@ int main() {
                     c.client_eof = true;
                 }
 
-                if (!close_it && c.client_eof && c.backend_eof && c.c2b_len == 0 && c.b2c_len == 0) {
+                if (!close_it && c.backend_eof && c.c2b_len == 0 && c.b2c_len == 0) {
                     close_it = true;
                 }
             }
