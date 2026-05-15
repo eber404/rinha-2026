@@ -9,7 +9,7 @@ const INDEX_PATH = "/data/vector-index/ivf_index.bin";
 const nativePath = join(import.meta.dir, "../native/build/knn.so");
 const lib = dlopen(nativePath, {
   knn_init: {
-    args: [FFIType.cstring, FFIType.cstring, FFIType.cstring],
+    args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
     returns: FFIType.int,
   },
   knn_search: {
@@ -19,9 +19,9 @@ const lib = dlopen(nativePath, {
 });
 
 const initRes = lib.symbols.knn_init(
-  ptr(Buffer.from(DATASET_PATH + "\0")),
-  ptr(Buffer.from(LABELS_PATH + "\0")),
-  ptr(Buffer.from(INDEX_PATH + "\0"))
+  Buffer.from(DATASET_PATH + "\0"),
+  Buffer.from(LABELS_PATH + "\0"),
+  Buffer.from(INDEX_PATH + "\0")
 );
 if (initRes !== 0) {
   console.error("Failed to initialize KNN engine");
@@ -35,6 +35,10 @@ const labelsBuf = new Uint8Array(5);
 
 function score(payload: Payload): { approved: boolean; fraud_score: number } {
   const vec = vectorize(payload);
+  if (vec.some(isNaN)) {
+    console.warn("NaN vector detected, falling back to approve");
+    return { approved: true, fraud_score: 0.0 };
+  }
   queryBuf.set(vec);
 
   const n = lib.symbols.knn_search(

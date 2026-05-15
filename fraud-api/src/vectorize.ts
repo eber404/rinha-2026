@@ -1,5 +1,5 @@
-import mccRisk from "../../.cache/rinha-official/resources/mcc_risk.json";
-import normalization from "../../.cache/rinha-official/resources/normalization.json";
+import mccRisk from "./data/mcc_risk.json";
+import normalization from "./data/normalization.json";
 
 const MCC_RISK: Record<string, number> = mccRisk;
 const NORM = normalization;
@@ -43,17 +43,29 @@ export function vectorize(payload: Payload): Float32Array {
 
   vec[0] = clamp(payload.transaction.amount / NORM.max_amount);
   vec[1] = clamp(payload.transaction.installments / NORM.max_installments);
-  vec[2] = clamp((payload.transaction.amount / payload.customer.avg_amount) / NORM.amount_vs_avg_ratio);
+  vec[2] = payload.customer.avg_amount === 0
+    ? 0
+    : clamp((payload.transaction.amount / payload.customer.avg_amount) / NORM.amount_vs_avg_ratio);
 
   const reqDate = new Date(payload.transaction.requested_at);
-  vec[3] = reqDate.getUTCHours() / 23.0;
-  vec[4] = reqDate.getUTCDay() / 6.0;
+  if (isNaN(reqDate.getTime())) {
+    vec[3] = -1;
+    vec[4] = -1;
+  } else {
+    vec[3] = reqDate.getUTCHours() / 23.0;
+    vec[4] = reqDate.getUTCDay() / 6.0;
+  }
 
   if (payload.last_transaction) {
     const lastDate = new Date(payload.last_transaction.timestamp);
-    const minutes = (reqDate.getTime() - lastDate.getTime()) / 60000;
-    vec[5] = clamp(minutes / NORM.max_minutes);
-    vec[6] = clamp(payload.last_transaction.km_from_current / NORM.max_km);
+    if (isNaN(lastDate.getTime())) {
+      vec[5] = -1;
+      vec[6] = -1;
+    } else {
+      const minutes = (reqDate.getTime() - lastDate.getTime()) / 60000;
+      vec[5] = clamp(minutes / NORM.max_minutes);
+      vec[6] = clamp(payload.last_transaction.km_from_current / NORM.max_km);
+    }
   } else {
     vec[5] = -1;
     vec[6] = -1;
