@@ -60,7 +60,10 @@ static int connect_backend(bool& out_in_progress) {
     for (int i = 0; i < n; ++i) {
         int idx = (next_backend + i) % n;
         int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
-        if (fd < 0) continue;
+        if (fd < 0) {
+            fprintf(stderr, "connect_backend: socket failed errno=%d\n", errno);
+            continue;
+        }
         sockaddr_un addr{};
         addr.sun_family = AF_UNIX;
         strncpy(addr.sun_path, backends[idx], sizeof(addr.sun_path) - 1);
@@ -74,6 +77,7 @@ static int connect_backend(bool& out_in_progress) {
             next_backend = (idx + 1) % n;
             return fd;
         }
+        fprintf(stderr, "connect_backend: connect to %s failed errno=%d (%s)\n", backends[idx], errno, strerror(errno));
         close(fd);
     }
     out_in_progress = false;
@@ -260,7 +264,7 @@ int main() {
                     c.client_eof = true;
                 }
 
-                if (!close_it && c.backend_eof && c.c2b_len == 0 && c.b2c_len == 0) {
+                if (!close_it && (c.backend_eof || c.client_eof) && c.c2b_len == 0 && c.b2c_len == 0) {
                     close_it = true;
                 }
             }
