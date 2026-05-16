@@ -167,7 +167,7 @@ int main() {
     int listen_fd = create_listen_socket();
     if (listen_fd < 0) { perror("listen socket"); return 1; }
 
-    Conn conns[MAX_CONNS]{};
+    Conn* conns = new Conn[MAX_CONNS]();
     int num_conns = 0;
 
     while (true) {

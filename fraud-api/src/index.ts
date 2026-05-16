@@ -62,6 +62,7 @@ function score(payload: Payload): { approved: boolean; fraud_score: number } {
 }
 
 const socketPath = `/tmp/rinha/api-${process.env.INSTANCE_ID ?? "1"}.sock`;
+try { require("fs").unlinkSync(socketPath); } catch {}
 
 Bun.serve({
   unix: socketPath,

@@ -8,8 +8,10 @@ services:
       - ./:/workspace
 
   api-1: &api
+    image: fraud-api:local
     build:
       context: fraud-api
+      network: host
     container_name: api-1
     working_dir: /app
     command: ["bun", "run", "src/index.ts"]
@@ -37,8 +39,10 @@ services:
       - INSTANCE_ID=2
 
   lb:
+    image: rinha-2026-lb
     build:
       context: load-balancer
+      network: host
     container_name: lb
     ports:
       - '9999:9999'
