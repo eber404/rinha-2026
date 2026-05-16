@@ -8,6 +8,11 @@ load-balancer/build/
 fraud-api/dist/
 vector-index/
 
+# Compiled scripts
+scripts/preprocess
+scripts/reduce_dataset
+reduce_dataset
+
 # Node
 node_modules/
 
