@@ -2,9 +2,9 @@ import { dlopen, FFIType, ptr } from "bun:ffi";
 import { vectorize, type Payload } from "./vectorize";
 import { join } from "path";
 
-const DATASET_PATH = "/data/vector-index/dataset.bin";
-const LABELS_PATH = "/data/vector-index/labels.bin";
-const INDEX_PATH = "/data/vector-index/ivf_index.bin";
+const DATASET_PATH = "/data/vector-index/dataset_reduced.bin";
+const LABELS_PATH = "/data/vector-index/labels_reduced.bin";
+const INDEX_PATH = "/data/vector-index/ivf_index_reduced.bin";
 
 const nativePath = join(import.meta.dir, "../native/build/knn.so");
 const lib = dlopen(nativePath, {
