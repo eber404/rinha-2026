@@ -40,7 +40,7 @@ struct TestRules {
     float max_km_home_legit;
     float min_km_home_fraud;
     uint32_t leaf_count;
-    RulesModel::RuleLeaf leaves[128];
+    RulesModel::RuleLeaf leaves[FRAUD_MAX_RULE_LEAVES];
 };
 
 static void write_file(const char* path, const void* data, size_t size) {
@@ -162,6 +162,60 @@ static void write_manifest_v2_disable_head_fixture(const char* dir) {
     write_file(path, &mh, sizeof(mh));
 }
 
+static void write_boundary_refine_fixture(const char* dir, bool high_boundary) {
+    mkdir(dir, 0777);
+    static constexpr int total = 10001;
+    uint8_t labels[total] = {};
+    labels[0] = 1;
+    labels[1] = 1;
+    if (high_boundary) labels[2] = 1;
+    int header[2] = {1, 14};
+    float centroid[14] = {};
+    uint32_t count = 5;
+    uint32_t ids[5] = {0, 1, 2, 3, 4};
+
+    char path[256];
+    std::snprintf(path, sizeof(path), "%s/dataset.bin", dir);
+    FILE* df = std::fopen(path, "wb");
+    assert(df != nullptr);
+    for (int i = 0; i < total; ++i) {
+        float row[14] = {};
+        row[2] = 0.9f;
+        row[7] = 0.9f;
+        row[11] = 1.0f;
+        row[12] = 0.5f;
+        if (i >= 100 && i < 105) {
+            row[2] = 0.55f;
+            row[7] = 0.55f;
+        }
+        assert(std::fwrite(row, sizeof(float), 14, df) == 14);
+    }
+    assert(std::fclose(df) == 0);
+    std::snprintf(path, sizeof(path), "%s/labels.bin", dir);
+    write_file(path, labels, sizeof(labels));
+    std::snprintf(path, sizeof(path), "%s/manifest.bin", dir);
+    TestManifest mh{0x46445231, 1, 14, 5, 0};
+    write_file(path, &mh, sizeof(mh));
+    std::snprintf(path, sizeof(path), "%s/rules_model.bin", dir);
+    TestRules rules{};
+    rules.min_conf_legit = 0.995f;
+    rules.min_conf_fraud = 0.995f;
+    rules.min_mcc_risk_fraud = 0.90f;
+    rules.max_amount_vs_avg_legit = 0.08f;
+    rules.min_amount_vs_avg_fraud = 0.98f;
+    rules.max_km_home_legit = 0.03f;
+    rules.min_km_home_fraud = 0.95f;
+    write_file(path, &rules, sizeof(rules));
+    std::snprintf(path, sizeof(path), "%s/ivf_index.bin", dir);
+    FILE* f = std::fopen(path, "wb");
+    assert(f != nullptr);
+    assert(std::fwrite(header, sizeof(int), 2, f) == 2);
+    assert(std::fwrite(centroid, sizeof(float), 14, f) == 14);
+    assert(std::fwrite(&count, sizeof(uint32_t), 1, f) == 1);
+    assert(std::fwrite(ids, sizeof(uint32_t), 5, f) == 5);
+    assert(std::fclose(f) == 0);
+}
+
 int main() {
     assert(fraud_init("/tmp/does-not-exist") != 0);
     fraud_close();
@@ -255,5 +309,19 @@ int main() {
     const float score_manifest_v2_head_off = fraud_score(q_head);
     fraud_close();
     assert(score_manifest_v2_head_off == score_without_head);
+
+    write_boundary_refine_fixture("/tmp/fraud_boundary_refine_high", true);
+    unsetenv("FRAUD_AMBIGUOUS_HEAD");
+    assert(fraud_init("/tmp/fraud_boundary_refine_high") == 0);
+    const float score_boundary_refined = fraud_score(q_head);
+    fraud_close();
+    assert(score_boundary_refined == 0.4f);
+
+    write_boundary_refine_fixture("/tmp/fraud_boundary_refine_low", false);
+    unsetenv("FRAUD_AMBIGUOUS_HEAD");
+    assert(fraud_init("/tmp/fraud_boundary_refine_low") == 0);
+    const float score_low_boundary_refined = fraud_score(q_head);
+    fraud_close();
+    assert(score_low_boundary_refined == 0.6f);
     return 0;
 }

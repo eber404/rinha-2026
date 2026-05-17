@@ -16,7 +16,7 @@ static constexpr int N_CLUSTERS = 4096;
 static constexpr int KMEANS_ITERS = 5;
 static constexpr uint32_t FRAUD_MAGIC = 0x46445231;
 static constexpr uint32_t FRAUD_VERSION = 1;
-static constexpr int FRAUD_MAX_RULE_LEAVES = 128;
+static constexpr int FRAUD_MAX_RULE_LEAVES = 256;
 static constexpr int FRAUD_MAX_LEAF_FEATURES = 4;
 
 struct ManifestHeader {
@@ -25,6 +25,7 @@ struct ManifestHeader {
     uint32_t dims;
     uint32_t k_default;
     uint32_t bucket_enabled;
+    uint32_t ambiguous_head_enabled;
 };
 
 struct RulesModelDisk {
@@ -187,6 +188,56 @@ static void mine_safe_leaves(RulesModelDisk& rules, const std::vector<Vector>& d
         }
     }
 
+    const float amount_hi[] = {0.70f, 0.80f, 0.90f};
+    const float avga_hi[] = {0.70f, 0.85f, 0.95f};
+    const float km_hi[] = {0.70f, 0.85f, 0.95f};
+    const float tx_hi[] = {0.60f, 0.80f, 0.95f};
+    const float inst_hi[] = {0.70f, 0.85f, 0.95f};
+    const float risk_hi[] = {0.60f, 0.75f, 0.90f};
+    for (float amount : amount_hi) {
+        for (float ratio : avga_hi) {
+            for (float km : km_hi) {
+                for (float tx : tx_hi) {
+                    add_leaf_if_safe(fraud_tmp, &data, 1, {0, 2, 7, 8}, {amount, ratio, km, tx}, {1.0f, 1.0f, 1.0f, 1.0f}, 16);
+                }
+            }
+        }
+    }
+    for (float amount : amount_hi) {
+        for (float ratio : avga_hi) {
+            for (float km : km_hi) {
+                add_leaf_if_safe(fraud_tmp, &data, 1, {0, 2, 7, 11}, {amount, ratio, km, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, 16);
+            }
+        }
+    }
+    for (float inst : inst_hi) {
+        for (float ratio : avga_hi) {
+            for (float km : km_hi) {
+                for (float risk : risk_hi) {
+                    add_leaf_if_safe(fraud_tmp, &data, 1, {1, 2, 7, 12}, {inst, ratio, km, risk}, {1.0f, 1.0f, 1.0f, 1.0f}, 16);
+                }
+            }
+        }
+    }
+    for (float ratio : avga_hi) {
+        for (float last_km : km_hi) {
+            for (float home_km : km_hi) {
+                for (float tx : tx_hi) {
+                    add_leaf_if_safe(fraud_tmp, &data, 1, {2, 6, 7, 8}, {ratio, last_km, home_km, tx}, {1.0f, 1.0f, 1.0f, 1.0f}, 16);
+                }
+            }
+        }
+    }
+    for (float ratio : avga_hi) {
+        for (float km : km_hi) {
+            for (float tx : tx_hi) {
+                for (float risk : risk_hi) {
+                    add_leaf_if_safe(fraud_tmp, &data, 1, {2, 7, 8, 12}, {ratio, km, tx, risk}, {1.0f, 1.0f, 1.0f, 1.0f}, 16);
+                }
+            }
+        }
+    }
+
     // Mine CLEAR_LEGIT
     const float amount_max[] = {0.02f, 0.03f, 0.05f, 0.08f, 0.10f, 0.15f, 0.20f};
     const float avga_max[] = {0.05f, 0.08f, 0.10f, 0.15f, 0.20f, 0.30f};
@@ -207,6 +258,38 @@ static void mine_safe_leaves(RulesModelDisk& rules, const std::vector<Vector>& d
         }
     }
 
+    const float amount_lo[] = {0.02f, 0.05f, 0.08f, 0.12f};
+    const float avga_lo[] = {0.05f, 0.10f, 0.15f};
+    const float km_lo[] = {0.03f, 0.08f, 0.15f};
+    const float tx_lo[] = {0.05f, 0.10f, 0.20f};
+    const float risk_lo[] = {0.10f, 0.25f, 0.40f};
+    const float merchant_lo[] = {0.05f, 0.10f, 0.20f};
+    for (float amount : amount_lo) {
+        for (float ratio : avga_lo) {
+            for (float km : km_lo) {
+                for (float tx : tx_lo) {
+                    add_leaf_if_safe(legit_tmp, &data, 0, {0, 2, 7, 8}, {0.0f, 0.0f, 0.0f, 0.0f}, {amount, ratio, km, tx});
+                }
+            }
+        }
+    }
+    for (float amount : amount_lo) {
+        for (float ratio : avga_lo) {
+            for (float km : km_lo) {
+                add_leaf_if_safe(legit_tmp, &data, 0, {0, 2, 7, 10}, {0.0f, 0.0f, 0.0f, 1.0f}, {amount, ratio, km, 1.0f});
+            }
+        }
+    }
+    for (float amount : amount_lo) {
+        for (float ratio : avga_lo) {
+            for (float risk : risk_lo) {
+                for (float merchant_avg : merchant_lo) {
+                    add_leaf_if_safe(legit_tmp, &data, 0, {0, 2, 12, 13}, {0.0f, 0.0f, 0.0f, 0.0f}, {amount, ratio, risk, merchant_avg});
+                }
+            }
+        }
+    }
+
     // Sort each by support descending
     auto sort_by_support = [](RulesModelDisk& tmp) {
         std::vector<RulesModelDisk::RuleLeaf> vec;
@@ -219,7 +302,7 @@ static void mine_safe_leaves(RulesModelDisk& rules, const std::vector<Vector>& d
     sort_by_support(legit_tmp);
 
     // Merge: take top fraud leaves then top legit leaves
-    uint32_t fraud_keep = std::min(fraud_tmp.leaf_count, 32u);
+    uint32_t fraud_keep = std::min(fraud_tmp.leaf_count, 96u);
     uint32_t legit_keep = std::min(legit_tmp.leaf_count, (uint32_t)(FRAUD_MAX_RULE_LEAVES - fraud_keep));
     
     rules.leaf_count = 0;
@@ -229,6 +312,74 @@ static void mine_safe_leaves(RulesModelDisk& rules, const std::vector<Vector>& d
     for (uint32_t i = 0; i < legit_keep; ++i) {
         rules.leaves[rules.leaf_count++] = legit_tmp.leaves[i];
     }
+}
+
+static bool validate_rules_against_data(const RulesModelDisk& rules, const std::vector<Vector>& data) {
+    if (rules.leaf_count > FRAUD_MAX_RULE_LEAVES) return false;
+    for (uint32_t i = 0; i < rules.leaf_count; ++i) {
+        const auto& leaf = rules.leaves[i];
+        if (leaf.feature_count == 0 || leaf.feature_count > FRAUD_MAX_LEAF_FEATURES) return false;
+        bool saw_match = false;
+        for (const auto& vec : data) {
+            if (!leaf_matches(vec, leaf)) continue;
+            saw_match = true;
+            if (leaf.decision == 0 && vec.label != 0) return false;
+            if (leaf.decision == 1 && vec.label != 1) return false;
+        }
+        if (!saw_match) return false;
+    }
+    return true;
+}
+
+static int run_self_test() {
+    if (FRAUD_MAX_RULE_LEAVES < 256) {
+        fprintf(stderr, "self-test: expected rule capacity >= 256\n");
+        return 1;
+    }
+
+    std::vector<Vector> data;
+    data.reserve(96);
+
+    for (int i = 0; i < 48; ++i) {
+        Vector fraud{};
+        fraud.label = 1;
+        fraud.v[0] = 0.96f;
+        fraud.v[1] = 0.90f;
+        fraud.v[2] = 0.95f;
+        fraud.v[6] = 0.85f;
+        fraud.v[7] = 0.90f;
+        fraud.v[8] = 0.85f;
+        fraud.v[11] = 1.0f;
+        fraud.v[12] = 0.90f;
+        data.push_back(fraud);
+    }
+
+    for (int i = 0; i < 48; ++i) {
+        Vector legit{};
+        legit.label = 0;
+        legit.v[0] = 0.02f;
+        legit.v[2] = 0.04f;
+        legit.v[7] = 0.02f;
+        legit.v[8] = 0.03f;
+        legit.v[10] = 1.0f;
+        legit.v[11] = 0.0f;
+        legit.v[12] = 0.10f;
+        legit.v[13] = 0.05f;
+        data.push_back(legit);
+    }
+
+    RulesModelDisk rules{};
+    mine_safe_leaves(rules, data);
+    if (rules.leaf_count == 0) {
+        fprintf(stderr, "self-test: expected mined leaves\n");
+        return 1;
+    }
+    if (!validate_rules_against_data(rules, data)) {
+        fprintf(stderr, "self-test: unsafe mined leaf\n");
+        return 1;
+    }
+    fprintf(stderr, "self-test: safe_leaves=%u\n", rules.leaf_count);
+    return 0;
 }
 
 static bool write_metadata_artifacts(const std::vector<Vector>* data = nullptr) {
@@ -255,6 +406,7 @@ static bool write_metadata_artifacts(const std::vector<Vector>* data = nullptr) 
     mh.dims = DIMS;
     mh.k_default = 5;
     mh.bucket_enabled = 0;
+    mh.ambiguous_head_enabled = 1;
     FILE* fm = fopen("vector-index/manifest.bin", "wb");
     if (!fm) { perror("manifest.bin"); return false; }
     if (fwrite(&mh, sizeof(mh), 1, fm) != 1) { perror("write manifest"); fclose(fm); return false; }
@@ -346,6 +498,10 @@ static void kmeans(const std::vector<Vector>& data, float* centroids, std::vecto
 }
 
 int main(int argc, char** argv) {
+    if (argc > 1 && strcmp(argv[1], "--self-test") == 0) {
+        return run_self_test();
+    }
+
     if (argc > 1 && strcmp(argv[1], "--metadata-only") == 0) {
         if (!copy_file("vector-index/dataset.bin", "vector-index/dataset_full.bin")) { perror("copy dataset_full.bin"); return 1; }
         if (!copy_file("vector-index/labels.bin", "vector-index/labels_full.bin")) { perror("copy labels_full.bin"); return 1; }

@@ -6,7 +6,7 @@
 static constexpr uint32_t FRAUD_MAGIC = 0x46445231;
 static constexpr uint32_t FRAUD_VERSION = 1;
 static constexpr int FRAUD_DIMS = 14;
-static constexpr int FRAUD_MAX_RULE_LEAVES = 128;
+static constexpr int FRAUD_MAX_RULE_LEAVES = 256;
 static constexpr int FRAUD_MAX_LEAF_FEATURES = 4;
 
 enum class DirectDecision : uint8_t {

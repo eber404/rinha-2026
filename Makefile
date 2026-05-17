@@ -18,6 +18,8 @@ test-native:
 	/tmp/engine_smoke
 	g++ -O2 -std=c++20 fraud-api/native/tests/ambiguous_head_smoke.cpp fraud-api/native/ambiguous_head.cpp -o /tmp/ambiguous_head_smoke
 	/tmp/ambiguous_head_smoke
+	g++ -O2 -std=c++20 scripts/preprocess.cpp -lz -o /tmp/preprocess_self_test
+	/tmp/preprocess_self_test --self-test
 
 test-api:
 	cd fraud-api && bun test src/vectorize.test.ts
