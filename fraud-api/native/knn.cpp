@@ -272,6 +272,67 @@ float KNNEngine::score(const float* vector14) {
     return score_vector_fallback(vector14);
 }
 
+float KNNEngine::score_ivf_exact_local(const float* query, int n_probe_expand) const {
+    if (!query || !dataset_.vectors || !dataset_.labels || ivf_.n_clusters <= 0) return 0.5f;
+    if (n_probe_expand <= 0) n_probe_expand = KNN_NPROBE;
+
+    // Select top clusters
+    struct ClusterDist { int id; float dist; };
+    std::array<ClusterDist, KNN_MAX_CLUSTERS> cdists;
+    for (int c = 0; c < ivf_.n_clusters; ++c) {
+        cdists[c] = {c, l2_sq(query, &ivf_.centroids[c * ivf_.dims])};
+    }
+    const int n_probe = std::min(n_probe_expand, ivf_.n_clusters);
+    std::partial_sort(cdists.begin(), cdists.begin() + n_probe, cdists.begin() + ivf_.n_clusters,
+                      [](const ClusterDist& a, const ClusterDist& b) { return a.dist < b.dist; });
+
+    // Collect all candidate IDs from selected clusters
+    static constexpr int MAX_LOCAL_CANDIDATES = 65536;
+    uint32_t candidates[MAX_LOCAL_CANDIDATES];
+    int candidate_count = 0;
+    for (int i = 0; i < n_probe; ++i) {
+        int c = cdists[i].id;
+        for (uint32_t id : ivf_.lists[c]) {
+            if (id >= dataset_.count) continue;
+            if (candidate_count < MAX_LOCAL_CANDIDATES) {
+                candidates[candidate_count++] = id;
+            }
+        }
+    }
+    if (candidate_count == 0) return 0.5f;
+
+    const int k = std::min(k_runtime_, KNN_K);
+    float best_dists[5] = {1e30f, 1e30f, 1e30f, 1e30f, 1e30f};
+    uint8_t best_labels[5] = {0, 0, 0, 0, 0};
+    int found = 0;
+
+    for (int i = 0; i < candidate_count; ++i) {
+        uint32_t id = candidates[i];
+        float dist = l2_sq(query, &dataset_.vectors[id * KNN_DIMS]);
+        if (found < k) {
+            best_dists[found] = dist;
+            best_labels[found] = dataset_.labels[id];
+            ++found;
+            for (int j = found - 1; j > 0 && best_dists[j] < best_dists[j-1]; --j) {
+                float td = best_dists[j]; best_dists[j] = best_dists[j-1]; best_dists[j-1] = td;
+                uint8_t tl = best_labels[j]; best_labels[j] = best_labels[j-1]; best_labels[j-1] = tl;
+            }
+        } else if (dist < best_dists[k-1]) {
+            best_dists[k-1] = dist;
+            best_labels[k-1] = dataset_.labels[id];
+            for (int j = k-1; j > 0 && best_dists[j] < best_dists[j-1]; --j) {
+                float td = best_dists[j]; best_dists[j] = best_dists[j-1]; best_dists[j-1] = td;
+                uint8_t tl = best_labels[j]; best_labels[j] = best_labels[j-1]; best_labels[j-1] = tl;
+            }
+        }
+    }
+
+    if (found == 0) return 0.5f;
+    int frauds = 0;
+    for (int i = 0; i < found; ++i) frauds += best_labels[i] ? 1 : 0;
+    return static_cast<float>(frauds) / static_cast<float>(found);
+}
+
 float KNNEngine::score_vector_fallback(const float* query) {
     if (!query) return 0.5f;
     if (dataset_.count <= 10000) return score_knn_full(query);
@@ -296,6 +357,17 @@ float KNNEngine::score_vector_fallback(const float* query) {
     float base_score = ivf_score;
     if (ivf_score == 0.4f) base_score = 0.6f;
     if (ivf_score == 0.6f) base_score = 0.4f;
+
+    // Two-tier: if ambiguous (2/5 or 3/5), refine with exact-local over expanded probe
+    if (frauds == 2 || frauds == 3) {
+        counters_.two_tier_exact_local++;
+        const float exact_local_score = score_ivf_exact_local(query, KNN_REFINE_NPROBE);
+        // If exact-local changes the decision boundary, use it; else keep ivf
+        if ((ivf_score < 0.6f) != (exact_local_score < 0.6f)) {
+            counters_.two_tier_boundary_changed++;
+            return apply_ambiguous_head(exact_local_score, query, found);
+        }
+    }
     return apply_ambiguous_head(base_score, query, found);
 }
 

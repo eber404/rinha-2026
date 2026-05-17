@@ -220,11 +220,11 @@ static float score_exact(const Dataset& dataset, const float* query, int k) {
     return found ? static_cast<float>(frauds) / static_cast<float>(found) : 0.5f;
 }
 
-static int search_ivf(const Dataset& dataset, const IVFIndex& ivf, const float* query, int k, uint8_t* out_labels) {
+static int search_ivf(const Dataset& dataset, const IVFIndex& ivf, const float* query, int k, int n_probe_requested, uint8_t* out_labels) {
     struct ClusterDist { int id; float dist; };
     std::array<ClusterDist, MAX_CLUSTERS> cdists;
     for (int c = 0; c < ivf.n_clusters; ++c) cdists[c] = {c, l2_sq(query, &ivf.centroids[c * DIMS])};
-    const int n_probe = std::min(NPROBE, ivf.n_clusters);
+    const int n_probe = std::min(n_probe_requested, ivf.n_clusters);
     std::partial_sort(cdists.begin(), cdists.begin() + n_probe, cdists.begin() + ivf.n_clusters,
                       [](const ClusterDist& a, const ClusterDist& b) { return a.dist < b.dist; });
 
@@ -256,9 +256,9 @@ static int search_ivf(const Dataset& dataset, const IVFIndex& ivf, const float* 
     return found;
 }
 
-static float score_ivf(const Dataset& dataset, const IVFIndex& ivf, const float* query, int k, int* out_found) {
+static float score_ivf(const Dataset& dataset, const IVFIndex& ivf, const float* query, int k, int n_probe, int* out_found) {
     uint8_t labels[K] = {0, 0, 0, 0, 0};
-    const int found = search_ivf(dataset, ivf, query, k, labels);
+    const int found = search_ivf(dataset, ivf, query, k, n_probe, labels);
     if (out_found) *out_found = found;
     if (found < k) return score_exact(dataset, query, k);
     int frauds = 0;
@@ -289,7 +289,7 @@ static int run_self_test() {
     float query[DIMS] = {};
     const float exact = score_exact(dataset, query, K);
     int found = 0;
-    const float ivf_score = score_ivf(dataset, ivf, query, K, &found);
+    const float ivf_score = score_ivf(dataset, ivf, query, K, NPROBE, &found);
     if (found != K || exact != 0.6f || ivf_score != exact || runtime_boundary_score(ivf_score) != 0.4f) {
         std::fprintf(stderr, "self-test: failed exact=%.3f ivf=%.3f found=%d\n", exact, ivf_score, found);
         return 1;
@@ -299,7 +299,7 @@ static int run_self_test() {
 }
 
 static void print_usage(const char* argv0) {
-    std::fprintf(stderr, "Usage: %s --self-test | --data-dir DIR [--samples N] [--stride N] [--only-ambiguous] [--output PATH]\n", argv0);
+    std::fprintf(stderr, "Usage: %s --self-test | --data-dir DIR [--samples N] [--stride N] [--nprobe N] [--only-ambiguous] [--output PATH]\n", argv0);
 }
 
 int main(int argc, char** argv) {
@@ -307,6 +307,7 @@ int main(int argc, char** argv) {
     std::string output_path;
     size_t samples = 200;
     size_t stride = 15485863;
+    int nprobe = 8;
     bool self_test = false;
     bool only_ambiguous = false;
 
@@ -315,6 +316,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) data_dir = argv[++i];
         else if (std::strcmp(argv[i], "--samples") == 0 && i + 1 < argc) samples = std::strtoull(argv[++i], nullptr, 10);
         else if (std::strcmp(argv[i], "--stride") == 0 && i + 1 < argc) stride = std::strtoull(argv[++i], nullptr, 10);
+        else if (std::strcmp(argv[i], "--nprobe") == 0 && i + 1 < argc) nprobe = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--only-ambiguous") == 0) only_ambiguous = true;
         else if (std::strcmp(argv[i], "--output") == 0 && i + 1 < argc) output_path = argv[++i];
         else { print_usage(argv[0]); return 1; }
@@ -353,7 +355,7 @@ int main(int argc, char** argv) {
 
         const float exact = score_exact(dataset, query, k);
         int found = 0;
-        const float ivf_score = score_ivf(dataset, ivf, query, k, &found);
+        const float ivf_score = score_ivf(dataset, ivf, query, k, nprobe, &found);
         const float runtime_score = runtime_boundary_score(ivf_score);
         float direct_score = 0.5f;
         if (direct == DirectDecision::CLEAR_LEGIT) direct_score = 0.0f;
@@ -392,6 +394,7 @@ int main(int argc, char** argv) {
     std::printf("runtime_exact_decision_disagree=%lu\n", metrics.runtime_exact_decision_disagree);
     std::printf("boundary_04=%lu\n", metrics.boundary_04);
     std::printf("boundary_06=%lu\n", metrics.boundary_06);
+    std::printf("nprobe=%d\n", nprobe);
     std::printf("only_ambiguous=%s\n", only_ambiguous ? "true" : "false");
     if (!output_path.empty()) std::printf("output=%s\n", output_path.c_str());
     return 0;

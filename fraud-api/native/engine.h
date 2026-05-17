@@ -57,4 +57,6 @@ struct RuntimeCounters {
     uint64_t sample_disagree = 0;
     uint64_t ambiguous_head_used = 0;
     uint64_t ambiguous_head_bypassed = 0;
+    uint64_t two_tier_exact_local = 0;
+    uint64_t two_tier_boundary_changed = 0;
 };

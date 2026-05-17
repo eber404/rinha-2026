@@ -46,6 +46,7 @@ private:
     float apply_ambiguous_head(float ivf_score, const float* query, int found);
     float score_vector_fallback(const float* query);
     float score_knn_full(const float* query) const;
+    float score_ivf_exact_local(const float* query, int n_probe_expand) const;
     int search_nprobe(const float* query, int k, int n_probe, uint32_t* out_indices, float* out_distances, uint8_t* out_labels) const;
     Dataset dataset_;
     IVFIndex ivf_;
