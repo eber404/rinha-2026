@@ -1,5 +1,6 @@
 #pragma once
 #include "engine.h"
+#include "ambiguous_head.h"
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -40,6 +41,9 @@ public:
 private:
     bool load_manifest(const char* path);
     bool load_rules(const char* path);
+    bool load_ambiguous_head(const char* path);
+    static bool env_ambiguous_head_enabled();
+    float apply_ambiguous_head(float ivf_score, const float* query, int found);
     float score_vector_fallback(const float* query);
     float score_knn_full(const float* query) const;
     int search_nprobe(const float* query, int k, int n_probe, uint32_t* out_indices, float* out_distances, uint8_t* out_labels) const;
@@ -47,9 +51,12 @@ private:
     IVFIndex ivf_;
     RulesModel rules_{};
     RuntimeCounters counters_{};
+    AmbiguousHead ambiguous_head_{};
     size_t dataset_size_ = 0;
     size_t labels_size_ = 0;
     int k_runtime_ = KNN_K;
+    bool ambiguous_head_enabled_ = true;
+    bool ambiguous_head_env_enabled_ = true;
     bool ready_ = false;
 };
 

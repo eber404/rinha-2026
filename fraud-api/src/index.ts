@@ -3,6 +3,7 @@ import { vectorize, type Payload } from "./vectorize";
 import { join } from "path";
 
 const DATASET_DIR = process.env.FRAUD_DATASET_PATH ?? "/data/vector-index";
+const AMBIGUOUS_HEAD_FLAG = process.env.FRAUD_AMBIGUOUS_HEAD ?? "off";
 
 const nativePath = join(import.meta.dir, "../native/build/knn.so");
 const lib = dlopen(nativePath, {
@@ -25,6 +26,7 @@ if (initRes !== 0) {
   console.error("fatal: fraud engine init failed");
   process.exit(1);
 }
+console.log(`fraud config: ambiguous_head=${AMBIGUOUS_HEAD_FLAG}`);
 
 const queryBuf = new Float32Array(14);
 

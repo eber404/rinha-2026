@@ -41,6 +41,7 @@ struct ManifestHeader {
     uint32_t dims;
     uint32_t k_default;
     uint32_t bucket_enabled;
+    uint32_t ambiguous_head_enabled;
 };
 
 struct RuntimeCounters {
@@ -54,4 +55,6 @@ struct RuntimeCounters {
     uint64_t refinement_changed = 0;
     uint64_t sample_exact = 0;
     uint64_t sample_disagree = 0;
+    uint64_t ambiguous_head_used = 0;
+    uint64_t ambiguous_head_bypassed = 0;
 };

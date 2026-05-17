@@ -5,12 +5,30 @@
 #include <cstring>
 #include <sys/stat.h>
 
+struct TestAmbiguousHead {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t feature_count;
+    uint32_t reserved;
+    float bias;
+    float weights[4];
+};
+
 struct TestManifest {
     uint32_t magic;
     uint32_t version;
     uint32_t dims;
     uint32_t k_default;
     uint32_t bucket_enabled;
+};
+
+struct TestManifestV2 {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t dims;
+    uint32_t k_default;
+    uint32_t bucket_enabled;
+    uint32_t ambiguous_head_enabled;
 };
 
 struct TestRules {
@@ -74,14 +92,9 @@ static void write_fixture(const char* dir, bool manifest) {
 
 static void write_full_fallback_fixture(const char* dir) {
     mkdir(dir, 0777);
-    float vectors[6][14] = {};
-    for (int i = 0; i < 6; ++i) {
-        vectors[i][2] = 0.5f + static_cast<float>(i) * 0.01f;
-        vectors[i][7] = 0.5f + static_cast<float>(i) * 0.01f;
-        vectors[i][12] = 0.5f;
-        vectors[i][11] = 1.0f;
-    }
-    uint8_t labels[6] = {0, 0, 0, 0, 0, 1};
+    static constexpr int total = 10001;
+    uint8_t labels[total] = {};
+    labels[5] = 1;
     int header[2] = {1, 14};
     float centroid[14] = {};
     uint32_t count = 5;
@@ -98,7 +111,17 @@ static void write_full_fallback_fixture(const char* dir) {
 
     char path[256];
     std::snprintf(path, sizeof(path), "%s/dataset.bin", dir);
-    write_file(path, vectors, sizeof(vectors));
+    FILE* df = std::fopen(path, "wb");
+    assert(df != nullptr);
+    for (int i = 0; i < total; ++i) {
+        float row[14] = {};
+        row[2] = 0.5f + static_cast<float>(i % 6) * 0.01f;
+        row[7] = 0.5f + static_cast<float>(i % 6) * 0.01f;
+        row[12] = 0.5f;
+        row[11] = 1.0f;
+        assert(std::fwrite(row, sizeof(float), 14, df) == 14);
+    }
+    assert(std::fclose(df) == 0);
     std::snprintf(path, sizeof(path), "%s/labels.bin", dir);
     write_file(path, labels, sizeof(labels));
     std::snprintf(path, sizeof(path), "%s/manifest.bin", dir);
@@ -113,6 +136,30 @@ static void write_full_fallback_fixture(const char* dir) {
     assert(std::fwrite(&count, sizeof(uint32_t), 1, f) == 1);
     assert(std::fwrite(ids, sizeof(uint32_t), 5, f) == 5);
     assert(std::fclose(f) == 0);
+}
+
+static void write_ambiguous_head_fixture(const char* dir) {
+    TestAmbiguousHead head{};
+    head.magic = 0x414D4231;
+    head.version = 1;
+    head.feature_count = 4;
+    head.bias = 2.0f;
+    head.weights[0] = -8.0f;
+    head.weights[1] = 0.0f;
+    head.weights[2] = 0.0f;
+    head.weights[3] = 0.0f;
+    char path[256];
+    std::snprintf(path, sizeof(path), "%s/ambiguous_head.bin", dir);
+    write_file(path, &head, sizeof(head));
+}
+
+static void write_manifest_v2_disable_head_fixture(const char* dir) {
+    write_full_fallback_fixture(dir);
+    write_ambiguous_head_fixture(dir);
+    TestManifestV2 mh{0x46445231, 1, 14, 5, 0, 0};
+    char path[256];
+    std::snprintf(path, sizeof(path), "%s/manifest.bin", dir);
+    write_file(path, &mh, sizeof(mh));
 }
 
 int main() {
@@ -168,7 +215,45 @@ int main() {
     q_amb[7] = 0.55f;
     q_amb[11] = 1.0f;
     q_amb[12] = 0.5f;
-    assert(fraud_score(q_amb) >= 0.2f);
+    assert(fraud_score(q_amb) == 0.0f);
     fraud_close();
+
+    write_full_fallback_fixture("/tmp/fraud_with_ambiguous_head");
+    write_ambiguous_head_fixture("/tmp/fraud_with_ambiguous_head");
+    setenv("FRAUD_AMBIGUOUS_HEAD", "on", 1);
+    assert(fraud_init("/tmp/fraud_with_ambiguous_head") == 0);
+    float q_head[14] = {};
+    q_head[2] = 0.55f;
+    q_head[7] = 0.55f;
+    q_head[11] = 1.0f;
+    q_head[12] = 0.5f;
+    const float score_with_head = fraud_score(q_head);
+    assert(score_with_head > 0.8f);
+    fraud_close();
+
+    setenv("FRAUD_AMBIGUOUS_HEAD", "off", 1);
+    assert(fraud_init("/tmp/fraud_with_ambiguous_head") == 0);
+    const float score_without_head = fraud_score(q_head);
+    fraud_close();
+    assert(score_without_head == 0.0f);
+
+    setenv("FRAUD_AMBIGUOUS_HEAD", "maybe", 1);
+    assert(fraud_init("/tmp/fraud_with_ambiguous_head") == 0);
+    const float score_invalid_env = fraud_score(q_head);
+    fraud_close();
+    assert(score_invalid_env == score_without_head);
+
+    unsetenv("FRAUD_AMBIGUOUS_HEAD");
+    assert(fraud_init("/tmp/fraud_full_fallback") == 0);
+    const float score_without_artifact = fraud_score(q_head);
+    fraud_close();
+    assert(score_without_artifact == score_without_head);
+
+    write_manifest_v2_disable_head_fixture("/tmp/fraud_v2_manifest_head_off");
+    unsetenv("FRAUD_AMBIGUOUS_HEAD");
+    assert(fraud_init("/tmp/fraud_v2_manifest_head_off") == 0);
+    const float score_manifest_v2_head_off = fraud_score(q_head);
+    fraud_close();
+    assert(score_manifest_v2_head_off == score_without_head);
     return 0;
 }

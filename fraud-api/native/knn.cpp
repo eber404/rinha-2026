@@ -6,11 +6,19 @@
 #include <array>
 #include <cassert>
 #include <string>
+#include <cstdlib>
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+static bool parse_env_bool(const char* value, bool default_value) {
+    if (!value || value[0] == '\0') return default_value;
+    if (std::strcmp(value, "0") == 0 || std::strcmp(value, "off") == 0 || std::strcmp(value, "false") == 0) return false;
+    if (std::strcmp(value, "1") == 0 || std::strcmp(value, "on") == 0 || std::strcmp(value, "true") == 0) return true;
+    return default_value;
+}
 
 static inline float l2_sq(const float* a, const float* b) {
     float s = 0.0f;
@@ -86,22 +94,33 @@ void KNNEngine::close() {
     ivf_ = IVFIndex{};
     rules_ = RulesModel{};
     counters_ = RuntimeCounters{};
+    ambiguous_head_.close();
     dataset_size_ = 0;
     labels_size_ = 0;
     k_runtime_ = KNN_K;
+    ambiguous_head_enabled_ = true;
+    ambiguous_head_env_enabled_ = true;
     ready_ = false;
 }
 
 bool KNNEngine::load_manifest(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return false;
-    ManifestHeader mh{};
-    const bool ok = fread(&mh, sizeof(mh), 1, f) == 1;
+    uint32_t raw[6] = {0, 0, 0, 0, 0, 1};
+    const size_t read = fread(raw, sizeof(uint32_t), 6, f);
     fclose(f);
-    if (!ok) return false;
+    if (read < 5) return false;
+    ManifestHeader mh{};
+    mh.magic = raw[0];
+    mh.version = raw[1];
+    mh.dims = raw[2];
+    mh.k_default = raw[3];
+    mh.bucket_enabled = raw[4];
+    mh.ambiguous_head_enabled = (read >= 6) ? raw[5] : 1;
     if (mh.magic != FRAUD_MAGIC || mh.version != FRAUD_VERSION || mh.dims != FRAUD_DIMS) return false;
     if (mh.k_default == 0 || mh.k_default > KNN_K) return false;
     k_runtime_ = static_cast<int>(mh.k_default);
+    ambiguous_head_enabled_ = mh.ambiguous_head_enabled != 0;
     return true;
 }
 
@@ -112,8 +131,37 @@ bool KNNEngine::load_rules(const char* path) {
     const bool ok = fread(&rules, sizeof(rules), 1, f) == 1;
     fclose(f);
     if (!ok) return false;
+    if (rules.leaf_count > FRAUD_MAX_RULE_LEAVES) return false;
+    if (!std::isfinite(rules.min_conf_legit) || !std::isfinite(rules.min_conf_fraud) ||
+        !std::isfinite(rules.min_mcc_risk_fraud) || !std::isfinite(rules.max_amount_vs_avg_legit) ||
+        !std::isfinite(rules.min_amount_vs_avg_fraud) || !std::isfinite(rules.max_km_home_legit) ||
+        !std::isfinite(rules.min_km_home_fraud)) {
+        return false;
+    }
+    for (uint32_t i = 0; i < rules.leaf_count; ++i) {
+        const auto& leaf = rules.leaves[i];
+        if (leaf.feature_count == 0 || leaf.feature_count > FRAUD_MAX_LEAF_FEATURES) return false;
+        if (leaf.decision != static_cast<uint8_t>(DirectDecision::CLEAR_LEGIT) &&
+            leaf.decision != static_cast<uint8_t>(DirectDecision::CLEAR_FRAUD)) return false;
+        for (uint8_t j = 0; j < leaf.feature_count; ++j) {
+            if (leaf.features[j] >= KNN_DIMS) return false;
+            const float min_v = leaf.min_values[j];
+            const float max_v = leaf.max_values[j];
+            if (!std::isfinite(min_v) || !std::isfinite(max_v)) return false;
+            if (min_v > max_v) return false;
+        }
+    }
     rules_ = rules;
     return true;
+}
+
+bool KNNEngine::env_ambiguous_head_enabled() {
+    return parse_env_bool(std::getenv("FRAUD_AMBIGUOUS_HEAD"), false);
+}
+
+bool KNNEngine::load_ambiguous_head(const char* path) {
+    if (!ambiguous_head_enabled_ || !ambiguous_head_env_enabled_) return false;
+    return ambiguous_head_.load(path);
 }
 
 bool KNNEngine::load(const char* dataset_path) {
@@ -132,11 +180,14 @@ bool KNNEngine::load(const char* dataset_path) {
         if (access(dataset_file.c_str(), R_OK) != 0) dataset_file = base + "dataset.bin";
         if (access(labels_file.c_str(), R_OK) != 0) labels_file = base + "labels.bin";
         const std::string index_file = base + "ivf_index.bin";
+        const std::string head_file = base + "ambiguous_head.bin";
         const bool ok = load(dataset_file.c_str(), labels_file.c_str(), index_file.c_str());
         if (!ok || !load_manifest(manifest_file.c_str()) || !load_rules(rules_file.c_str())) {
             close();
             return false;
         }
+        ambiguous_head_env_enabled_ = env_ambiguous_head_enabled();
+        load_ambiguous_head(head_file.c_str());
         ready_ = true;
         return true;
     }
@@ -191,9 +242,10 @@ float KNNEngine::score(const float* vector14) {
         counters_.clear_legit++;
         const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
         if (total && total % 10000 == 0) {
-            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu\n",
+            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu\n",
                          total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
-                         counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree);
+                         counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree,
+                         counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed);
         }
         return 0.0f;
     }
@@ -201,9 +253,10 @@ float KNNEngine::score(const float* vector14) {
         counters_.clear_fraud++;
         const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
         if (total && total % 10000 == 0) {
-            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu\n",
+            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu\n",
                          total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
-                         counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree);
+                         counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree,
+                         counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed);
         }
         return 1.0f;
     }
@@ -211,14 +264,16 @@ float KNNEngine::score(const float* vector14) {
     counters_.fallback_full++;
     const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
     if (total && total % 10000 == 0) {
-        std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu\n",
+        std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu\n",
                      total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
-                     counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree);
+                     counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree,
+                     counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed);
     }
     return score_vector_fallback(vector14);
 }
 
 float KNNEngine::score_vector_fallback(const float* query) {
+    if (!query) return 0.5f;
     if (dataset_.count <= 10000) return score_knn_full(query);
     uint32_t indices[KNN_K];
     float distances[KNN_K];
@@ -238,9 +293,24 @@ float KNNEngine::score_vector_fallback(const float* query) {
         const float exact_score = score_knn_full(query);
         if ((ivf_score < 0.6f) != (exact_score < 0.6f)) counters_.sample_disagree++;
     }
-    if (ivf_score == 0.4f) return 0.6f;
-    if (ivf_score == 0.6f) return 0.4f;
-    return ivf_score;
+    float base_score = ivf_score;
+    if (ivf_score == 0.4f) base_score = 0.6f;
+    if (ivf_score == 0.6f) base_score = 0.4f;
+    return apply_ambiguous_head(base_score, query, found);
+}
+
+float KNNEngine::apply_ambiguous_head(float ivf_score, const float* query, int found) {
+    if (!ambiguous_head_enabled_ || !ambiguous_head_env_enabled_ || !ambiguous_head_.loaded()) {
+        counters_.ambiguous_head_bypassed++;
+        return ivf_score;
+    }
+    counters_.ambiguous_head_used++;
+    float features[AMBIGUOUS_HEAD_MAX_FEATURES] = {0.0f, 0.0f, 0.0f, 0.0f};
+    features[0] = ivf_score;
+    features[1] = std::fabs(ivf_score - 0.5f);
+    features[2] = query ? query[12] : 0.0f;
+    features[3] = static_cast<float>(found) / static_cast<float>(KNN_K);
+    return ambiguous_head_.infer(features, AMBIGUOUS_HEAD_MAX_FEATURES);
 }
 
 float KNNEngine::score_knn_full(const float* query) const {

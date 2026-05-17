@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "bun run src/index.ts",
-    "build-native": "mkdir -p native/build && g++ -O3 -std=c++20 -flto -fPIC -shared -o native/build/knn.so native/knn.cpp native/binding.cpp",
+    "build-native": "mkdir -p native/build && g++ -O3 -std=c++20 -flto -fPIC -shared -o native/build/knn.so native/knn.cpp native/ambiguous_head.cpp native/binding.cpp",
     "test": "bun test"
   },
   "devDependencies": {

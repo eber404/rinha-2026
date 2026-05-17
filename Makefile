@@ -14,8 +14,10 @@ api:
 
 test-native:
 	mkdir -p /tmp
-	g++ -O2 -std=c++20 fraud-api/native/tests/engine_smoke.cpp fraud-api/native/knn.cpp fraud-api/native/binding.cpp -o /tmp/engine_smoke
+	g++ -O2 -std=c++20 fraud-api/native/tests/engine_smoke.cpp fraud-api/native/knn.cpp fraud-api/native/ambiguous_head.cpp fraud-api/native/binding.cpp -o /tmp/engine_smoke
 	/tmp/engine_smoke
+	g++ -O2 -std=c++20 fraud-api/native/tests/ambiguous_head_smoke.cpp fraud-api/native/ambiguous_head.cpp -o /tmp/ambiguous_head_smoke
+	/tmp/ambiguous_head_smoke
 
 test-api:
 	cd fraud-api && bun test src/vectorize.test.ts
