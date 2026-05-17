@@ -53,7 +53,8 @@ export function vectorize(payload: Payload): Float32Array {
     vec[4] = -1;
   } else {
     vec[3] = reqDate.getUTCHours() / 23.0;
-    vec[4] = reqDate.getUTCDay() / 6.0;
+    // Map JS getUTCDay() (0=Sunday..6=Saturday) to official spec (0=Monday..6=Sunday)
+    vec[4] = ((reqDate.getUTCDay() + 6) % 7) / 6.0;
   }
 
   if (payload.last_transaction && !isNaN(reqDate.getTime())) {
@@ -62,7 +63,7 @@ export function vectorize(payload: Payload): Float32Array {
       vec[5] = -1;
       vec[6] = -1;
     } else {
-      const minutes = (reqDate.getTime() - lastDate.getTime()) / 60000;
+      const minutes = Math.floor((reqDate.getTime() - lastDate.getTime()) / 60000);
       vec[5] = clamp(minutes / NORM.max_minutes);
       vec[6] = clamp(payload.last_transaction.km_from_current / NORM.max_km);
     }

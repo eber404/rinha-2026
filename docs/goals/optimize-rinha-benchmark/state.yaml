@@ -1,0 +1,106 @@
+goal:
+  title: "Optimize Rinha 2026 Benchmark E2E"
+  slug: optimize-rinha-benchmark
+  status: active
+  intake_shape: existing_plan
+  visual_board:
+    type: none
+    local_url: null
+  agents:
+    scout: bundled_not_installed
+    worker: bundled_not_installed
+    judge: bundled_not_installed
+
+tasks:
+  - id: T001
+    type: pm
+    assignee: PM
+    status: done
+    receipt:
+      result: done
+      summary: "Plan operationalized. Board created with Scout -> Judge -> Worker -> PM loop. Stopping conditions: failure_rate=0, p99<5ms, or marginal gain too low."
+    objective: "Validate and operationalize the existing benchmark optimization plan."
+    inputs:
+      - "User-provided 6-step process (benchmark -> inspect -> identify -> fix -> re-run -> repeat)"
+      - "Current metrics: p99=183.65ms, failure_rate=2.23%, http_errors=0"
+      - "Target metrics: p99<5ms, failure_rate=0%, http_errors=0"
+    expected_output:
+      - "Operationalized plan with clear task sequence"
+      - "Known risks and safe stopping conditions"
+    receipt: null
+
+  - id: T002
+    type: scout
+    assignee: Scout
+    status: active
+    objective: "Analyze current benchmark results and codebase to identify root causes of failure_rate and p99 latency."
+    inputs:
+      - "artifacts/rinha-official-result.json (latest benchmark)"
+      - "docker-compose.yml resource limits"
+      - "fraud-api/src/index.ts and vectorize.ts"
+      - "fraud-api/native/knn.cpp (IVF search implementation)"
+      - "load-balancer/src/main.cpp"
+    expected_output:
+      - "Root cause of 2.23% failure_rate (false positives/negatives from reduced dataset or IVF approximation)"
+      - "Root cause of 183ms p99 (Bun FFI overhead, IVF nprobe too high, Docker CPU limits, LB overhead)"
+      - "Top 3 highest-impact optimization candidates ranked by confidence and reversibility"
+    receipt: null
+
+  - id: T003
+    type: judge
+    assignee: Judge
+    status: queued
+    objective: "Select the first safe optimization task from Scout findings."
+    inputs:
+      - "T002 Scout receipt"
+    expected_output:
+      - "Decision on which optimization to pursue first"
+      - "Exact Worker objective"
+      - "allowed_files"
+      - "verify commands"
+      - "stop_if conditions"
+    receipt: null
+
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: queued
+    objective: "Execute the first optimization task selected by Judge."
+    allowed_files: []
+    verify:
+      - "make benchmark produces results.json"
+      - "Compare metrics before/after"
+    stop_if:
+      - "Need files outside allowed_files"
+      - "Behavior is ambiguous"
+      - "Verification fails twice"
+      - "Benchmark results regress (higher failure_rate or higher p99)"
+    receipt: null
+
+  - id: T005
+    type: pm
+    assignee: PM
+    status: queued
+    objective: "Evaluate results after first optimization. Decide next step: continue, pivot, or stop."
+    inputs:
+      - "T004 Worker receipt"
+      - "Latest benchmark results"
+    expected_output:
+      - "Next active task (another Worker, more Scout, or Judge)"
+      - "Updated board state"
+    receipt: null
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: queued
+    objective: "Audit whether benchmark targets are reached."
+    inputs:
+      - "All done task receipts"
+      - "Latest benchmark results.json"
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "missing evidence or remaining work"
+      - "next task if not complete"
+    receipt: null

@@ -1,0 +1,81 @@
+goal:
+  slug: rinha-benchmark
+  title: Rinha 2026 Benchmark Optimization
+  status: active
+  created: 2026-05-16
+
+intake:
+  original_request: "Execute e otimize o benchmark E2E deste repositório"
+  interpreted_outcome: "Make benchmark pass: http_errors=0, failure_rate=0, p99<5ms"
+  input_shape: recovery
+  authority: requested
+  proof_type: metric
+  completion_proof: "make benchmark shows http_errors=0, failure_rate=0, p99<5ms"
+  likely_misfire: "Fixing error rate but p99 still hits 2001ms timeout cutoff"
+  blind_spots:
+    - "Whether 5ms p99 is achievable given 3M dataset + CPU limits"
+    - "Whether LB or API is the bottleneck under load"
+    - "Memory pressure from mmap'd 168MB dataset within 128MB container"
+
+visual_board:
+  enabled: true
+  type: local
+
+agents:
+  scout: unknown
+  worker: unknown
+  judge: unknown
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: active
+    objective: "Map system under load — identify where/why connections drop"
+    inputs:
+      - k6 load config (900 RPS, 250 VUs)
+      - docker-compose resource limits
+      - LB source code
+      - API source code
+      - current benchmark results
+    expected_output:
+      - "Root cause of HTTP errors under load"
+      - "Root cause of high p99 latency"
+      - "Evidence: logs, timings, or data points"
+    receipt: null
+
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: queued
+    objective: "Prioritize fixes by impact and feasibility"
+    inputs:
+      - T001 findings
+    expected_output:
+      - "Ranked list of fix candidates"
+      - "Selected first Worker task with allowed_files, verify, stop_if"
+    receipt: null
+
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: queued
+    objective: "Execute first prioritized fix"
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "Need files outside allowed_files"
+      - "Behavior is ambiguous"
+      - "Verification fails twice"
+    receipt: null
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: queued
+    objective: "Final audit — verify metrics meet targets"
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "next action if not complete"
+    receipt: null

@@ -13,6 +13,10 @@ scripts/preprocess
 scripts/reduce_dataset
 reduce_dataset
 
+# Native build artifacts
+*.so
+native/build/
+
 # Node
 node_modules/
 

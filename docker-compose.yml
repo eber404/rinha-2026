@@ -26,6 +26,7 @@ services:
         condition: service_completed_successfully
     environment:
       - INSTANCE_ID=1
+      - FRAUD_DATASET_PATH=/data/vector-index
     deploy:
       resources:
         limits:
@@ -37,6 +38,7 @@ services:
     container_name: api-2
     environment:
       - INSTANCE_ID=2
+      - FRAUD_DATASET_PATH=/data/vector-index
 
   lb:
     image: rinha-2026-lb
@@ -57,7 +59,7 @@ services:
       resources:
         limits:
           cpus: '0.15'
-          memory: '64MB'
+          memory: '128MB'
 
 networks:
   rinha-net:

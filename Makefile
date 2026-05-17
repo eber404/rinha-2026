@@ -1,4 +1,4 @@
-.PHONY: all preprocess lb api benchmark clean
+.PHONY: all preprocess lb api test-native test-api benchmark clean
 
 all: preprocess lb api
 
@@ -11,6 +11,14 @@ lb:
 
 api:
 	cd fraud-api && bun run build-native
+
+test-native:
+	mkdir -p /tmp
+	g++ -O2 -std=c++20 fraud-api/native/tests/engine_smoke.cpp fraud-api/native/knn.cpp fraud-api/native/binding.cpp -o /tmp/engine_smoke
+	/tmp/engine_smoke
+
+test-api:
+	cd fraud-api && bun test src/vectorize.test.ts
 
 benchmark:
 	@cd .cache/rinha-official && ./run.sh

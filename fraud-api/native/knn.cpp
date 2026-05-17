@@ -5,18 +5,59 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <string>
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-static float l2_sq(const float* a, const float* b, int dims) {
+static inline float l2_sq(const float* a, const float* b) {
     float s = 0.0f;
-    for (int i = 0; i < dims; ++i) {
+    for (int i = 0; i < KNN_DIMS; ++i) {
         float d = a[i] - b[i];
         s += d * d;
     }
     return s;
+}
+
+static DirectDecision decide_conservative(const float* v, const RulesModel& r) {
+    if (!v) return DirectDecision::AMBIGUOUS;
+    const uint32_t leaf_count = std::min<uint32_t>(r.leaf_count, FRAUD_MAX_RULE_LEAVES);
+    for (uint32_t i = 0; i < leaf_count; ++i) {
+        const auto& leaf = r.leaves[i];
+        if (leaf.feature_count == 0 || leaf.feature_count > FRAUD_MAX_LEAF_FEATURES) continue;
+        bool match = true;
+        for (uint8_t j = 0; j < leaf.feature_count; ++j) {
+            const uint8_t feature = leaf.features[j];
+            if (feature >= KNN_DIMS) { match = false; break; }
+            const float value = v[feature];
+            if (value < leaf.min_values[j] || value > leaf.max_values[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (!match) continue;
+        if (leaf.decision == static_cast<uint8_t>(DirectDecision::CLEAR_LEGIT)) return DirectDecision::CLEAR_LEGIT;
+        if (leaf.decision == static_cast<uint8_t>(DirectDecision::CLEAR_FRAUD)) return DirectDecision::CLEAR_FRAUD;
+    }
+
+    const float amount_vs_avg = v[2];
+    const float km_home = v[7];
+    const float mcc_risk = v[12];
+    const float unknown_merchant = v[11];
+
+    if (amount_vs_avg <= r.max_amount_vs_avg_legit &&
+        km_home <= r.max_km_home_legit &&
+        unknown_merchant < 0.5f) {
+        return DirectDecision::CLEAR_LEGIT;
+    }
+    if (amount_vs_avg >= r.min_amount_vs_avg_fraud &&
+        km_home >= r.min_km_home_fraud &&
+        mcc_risk >= r.min_mcc_risk_fraud) {
+        return DirectDecision::CLEAR_FRAUD;
+    }
+    return DirectDecision::AMBIGUOUS;
 }
 
 static bool mmap_file(const char* path, const void** ptr, size_t* size) {
@@ -31,98 +72,272 @@ static bool mmap_file(const char* path, const void** ptr, size_t* size) {
 }
 
 KNNEngine::~KNNEngine() {
+    close();
+}
+
+void KNNEngine::close() {
     if (dataset_.vectors && dataset_size_) {
         munmap(const_cast<void*>(static_cast<const void*>(dataset_.vectors)), dataset_size_);
     }
     if (dataset_.labels && labels_size_) {
         munmap(const_cast<void*>(static_cast<const void*>(dataset_.labels)), labels_size_);
     }
+    dataset_ = Dataset{};
+    ivf_ = IVFIndex{};
+    rules_ = RulesModel{};
+    counters_ = RuntimeCounters{};
+    dataset_size_ = 0;
+    labels_size_ = 0;
+    k_runtime_ = KNN_K;
+    ready_ = false;
+}
+
+bool KNNEngine::load_manifest(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    ManifestHeader mh{};
+    const bool ok = fread(&mh, sizeof(mh), 1, f) == 1;
+    fclose(f);
+    if (!ok) return false;
+    if (mh.magic != FRAUD_MAGIC || mh.version != FRAUD_VERSION || mh.dims != FRAUD_DIMS) return false;
+    if (mh.k_default == 0 || mh.k_default > KNN_K) return false;
+    k_runtime_ = static_cast<int>(mh.k_default);
+    return true;
+}
+
+bool KNNEngine::load_rules(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    RulesModel rules{};
+    const bool ok = fread(&rules, sizeof(rules), 1, f) == 1;
+    fclose(f);
+    if (!ok) return false;
+    rules_ = rules;
+    return true;
+}
+
+bool KNNEngine::load(const char* dataset_path) {
+    if (!dataset_path || dataset_path[0] == '\0') return false;
+
+    struct stat st;
+    if (stat(dataset_path, &st) != 0) return false;
+
+    if (S_ISDIR(st.st_mode)) {
+        std::string base(dataset_path);
+        if (!base.empty() && base.back() != '/') base.push_back('/');
+        const std::string manifest_file = base + "manifest.bin";
+        const std::string rules_file = base + "rules_model.bin";
+        std::string dataset_file = base + "dataset_full.bin";
+        std::string labels_file = base + "labels_full.bin";
+        if (access(dataset_file.c_str(), R_OK) != 0) dataset_file = base + "dataset.bin";
+        if (access(labels_file.c_str(), R_OK) != 0) labels_file = base + "labels.bin";
+        const std::string index_file = base + "ivf_index.bin";
+        const bool ok = load(dataset_file.c_str(), labels_file.c_str(), index_file.c_str());
+        if (!ok || !load_manifest(manifest_file.c_str()) || !load_rules(rules_file.c_str())) {
+            close();
+            return false;
+        }
+        ready_ = true;
+        return true;
+    }
+
+    return load(dataset_path, "labels.bin", "ivf_index.bin");
 }
 
 bool KNNEngine::load(const char* dataset_path, const char* labels_path, const char* index_path) {
-    // Clean up any previously loaded data to avoid leaks on re-load
-    this->~KNNEngine();
-    new (this) KNNEngine();
+    close();
 
     const void* dptr = nullptr;
     size_t dsize = 0;
     if (!mmap_file(dataset_path, &dptr, &dsize)) return false;
+    if (dsize == 0 || dsize % (sizeof(float) * KNN_DIMS) != 0) { close(); return false; }
     dataset_.vectors = (const float*)dptr;
     dataset_.count = dsize / (sizeof(float) * KNN_DIMS);
     dataset_size_ = dsize;
 
     const void* lptr = nullptr;
     size_t lsize = 0;
-    if (!mmap_file(labels_path, &lptr, &lsize)) return false;
+    if (!mmap_file(labels_path, &lptr, &lsize)) { close(); return false; }
+    if (lsize < dataset_.count) { close(); return false; }
     dataset_.labels = (const uint8_t*)lptr;
     labels_size_ = lsize;
 
     FILE* f = fopen(index_path, "rb");
-    if (!f) return false;
+    if (!f) { close(); return false; }
     int header[2];
-    if (fread(header, sizeof(int), 2, f) != 2) { fclose(f); return false; }
+    if (fread(header, sizeof(int), 2, f) != 2) { fclose(f); close(); return false; }
     ivf_.n_clusters = header[0];
     ivf_.dims = header[1];
-    if (ivf_.dims != KNN_DIMS) { fclose(f); return false; }
-    if (ivf_.n_clusters <= 0 || ivf_.n_clusters > 512) { fclose(f); return false; }
+    if (ivf_.dims != KNN_DIMS) { fclose(f); close(); return false; }
+    if (ivf_.n_clusters <= 0 || ivf_.n_clusters > KNN_MAX_CLUSTERS) { fclose(f); close(); return false; }
     ivf_.centroids.resize(ivf_.n_clusters * ivf_.dims);
-    if (fread(ivf_.centroids.data(), sizeof(float), ivf_.centroids.size(), f) != ivf_.centroids.size()) { fclose(f); return false; }
+    if (fread(ivf_.centroids.data(), sizeof(float), ivf_.centroids.size(), f) != ivf_.centroids.size()) { fclose(f); close(); return false; }
     ivf_.lists.resize(ivf_.n_clusters);
     for (int c = 0; c < ivf_.n_clusters; ++c) {
         uint32_t cnt;
-        if (fread(&cnt, sizeof(uint32_t), 1, f) != 1) { fclose(f); return false; }
+        if (fread(&cnt, sizeof(uint32_t), 1, f) != 1) { fclose(f); close(); return false; }
         ivf_.lists[c].resize(cnt);
-        if (cnt && fread(ivf_.lists[c].data(), sizeof(uint32_t), cnt, f) != cnt) { fclose(f); return false; }
+        if (cnt && fread(ivf_.lists[c].data(), sizeof(uint32_t), cnt, f) != cnt) { fclose(f); close(); return false; }
     }
     fclose(f);
+    ready_ = true;
     return true;
 }
 
+float KNNEngine::score(const float* vector14) {
+    if (!ready_) return 0.5f;
+    const DirectDecision decision = decide_conservative(vector14, rules_);
+    if (decision == DirectDecision::CLEAR_LEGIT) {
+        counters_.clear_legit++;
+        const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
+        if (total && total % 10000 == 0) {
+            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu\n",
+                         total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
+                         counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree);
+        }
+        return 0.0f;
+    }
+    if (decision == DirectDecision::CLEAR_FRAUD) {
+        counters_.clear_fraud++;
+        const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
+        if (total && total % 10000 == 0) {
+            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu\n",
+                         total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
+                         counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree);
+        }
+        return 1.0f;
+    }
+    counters_.ambiguous++;
+    counters_.fallback_full++;
+    const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
+    if (total && total % 10000 == 0) {
+        std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu\n",
+                     total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
+                     counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree);
+    }
+    return score_vector_fallback(vector14);
+}
+
+float KNNEngine::score_vector_fallback(const float* query) {
+    if (dataset_.count <= 10000) return score_knn_full(query);
+    uint32_t indices[KNN_K];
+    float distances[KNN_K];
+    uint8_t labels[KNN_K];
+    const int found = search(query, k_runtime_, indices, distances, labels);
+    if (found < k_runtime_) {
+        counters_.refinement_exact++;
+        return score_knn_full(query);
+    }
+
+    int frauds = 0;
+    for (int i = 0; i < found; ++i) frauds += labels[i] ? 1 : 0;
+    counters_.fallback_ivf++;
+    const float ivf_score = static_cast<float>(frauds) / static_cast<float>(found);
+    if ((counters_.fallback_ivf & 32767ULL) == 0) {
+        counters_.sample_exact++;
+        const float exact_score = score_knn_full(query);
+        if ((ivf_score < 0.6f) != (exact_score < 0.6f)) counters_.sample_disagree++;
+    }
+    if (ivf_score == 0.4f) return 0.6f;
+    if (ivf_score == 0.6f) return 0.4f;
+    return ivf_score;
+}
+
+float KNNEngine::score_knn_full(const float* query) const {
+    if (!query || !dataset_.vectors || !dataset_.labels || dataset_.count == 0) return 0.5f;
+    const int k = std::min(k_runtime_, KNN_K);
+    float distances[KNN_K];
+    uint8_t labels[KNN_K];
+    int found = 0;
+    for (int i = 0; i < k; ++i) {
+        distances[i] = 1e30f;
+        labels[i] = 0;
+    }
+
+    for (size_t id = 0; id < dataset_.count; ++id) {
+        const float dist = l2_sq(query, &dataset_.vectors[id * KNN_DIMS]);
+        if (found < k) {
+            distances[found] = dist;
+            labels[found] = dataset_.labels[id];
+            ++found;
+        } else if (dist >= distances[k - 1]) {
+            continue;
+        } else {
+            distances[k - 1] = dist;
+            labels[k - 1] = dataset_.labels[id];
+        }
+        for (int j = found < k ? found - 1 : k - 1; j > 0 && distances[j] < distances[j - 1]; --j) {
+            std::swap(distances[j], distances[j - 1]);
+            std::swap(labels[j], labels[j - 1]);
+        }
+    }
+    if (found == 0) return 0.5f;
+
+    int frauds = 0;
+    for (int i = 0; i < found; ++i) {
+        frauds += labels[i] ? 1 : 0;
+    }
+    return static_cast<float>(frauds) / static_cast<float>(found);
+}
+
 int KNNEngine::search(const float* query, int k, uint32_t* out_indices, float* out_distances, uint8_t* out_labels) const {
+    return search_nprobe(query, k, KNN_NPROBE, out_indices, out_distances, out_labels);
+}
+
+int KNNEngine::search_nprobe(const float* query, int k, int n_probe_requested, uint32_t* out_indices, float* out_distances, uint8_t* out_labels) const {
+    if (!query || !dataset_.vectors || !dataset_.labels || ivf_.n_clusters <= 0 || ivf_.centroids.empty()) return 0;
     if (k <= 0) return 0;
     if (k > KNN_K) k = KNN_K;
 
     // Find closest clusters
     struct ClusterDist { int id; float dist; };
-    std::array<ClusterDist, 512> cdists;
+    std::array<ClusterDist, KNN_MAX_CLUSTERS> cdists;
     for (int c = 0; c < ivf_.n_clusters; ++c) {
-        cdists[c] = {c, l2_sq(query, &ivf_.centroids[c * ivf_.dims], ivf_.dims)};
+        cdists[c] = {c, l2_sq(query, &ivf_.centroids[c * ivf_.dims])};
     }
-    int n_probe = std::min(KNN_NPROBE, ivf_.n_clusters);
+    int n_probe = std::min(n_probe_requested, ivf_.n_clusters);
     std::partial_sort(cdists.begin(), cdists.begin() + n_probe, cdists.begin() + ivf_.n_clusters,
                       [](const ClusterDist& a, const ClusterDist& b) { return a.dist < b.dist; });
 
-    // Brute-force within NPROBE clusters, keep top-k
-    struct Neighbor { uint32_t id; float dist; uint8_t label; };
-    std::array<Neighbor, KNN_K> topk;
-    size_t topk_size = 0;
-
-    auto insert = [&](uint32_t id, float dist, uint8_t label) {
-        if (topk_size < (size_t)k) {
-            topk[topk_size] = {id, dist, label};
-            ++topk_size;
-            std::push_heap(topk.begin(), topk.begin() + topk_size, [](const Neighbor& a, const Neighbor& b) { return a.dist < b.dist; });
-        } else if (dist < topk.front().dist) {
-            std::pop_heap(topk.begin(), topk.begin() + topk_size, [](const Neighbor& a, const Neighbor& b) { return a.dist < b.dist; });
-            topk[topk_size - 1] = {id, dist, label};
-            std::push_heap(topk.begin(), topk.begin() + topk_size, [](const Neighbor& a, const Neighbor& b) { return a.dist < b.dist; });
-        }
-    };
+    // Brute-force within NPROBE clusters, keep top-k using simple arrays
+    float best_dists[5] = {1e30f, 1e30f, 1e30f, 1e30f, 1e30f};
+    uint32_t best_ids[5] = {0, 0, 0, 0, 0};
+    uint8_t best_labels[5] = {0, 0, 0, 0, 0};
+    int found = 0;
 
     for (int i = 0; i < n_probe; ++i) {
         int c = cdists[i].id;
         for (uint32_t id : ivf_.lists[c]) {
-            if (id >= dataset_.count) continue; // skip out-of-range IDs
-            float dist = l2_sq(query, &dataset_.vectors[id * KNN_DIMS], KNN_DIMS);
-            insert(id, dist, dataset_.labels[id]);
+            if (id >= dataset_.count) continue;
+            float dist = l2_sq(query, &dataset_.vectors[id * KNN_DIMS]);
+            if (found < k) {
+                best_dists[found] = dist;
+                best_ids[found] = id;
+                best_labels[found] = dataset_.labels[id];
+                ++found;
+                // Bubble up
+                for (int j = found - 1; j > 0 && best_dists[j] < best_dists[j-1]; --j) {
+                    float td = best_dists[j]; best_dists[j] = best_dists[j-1]; best_dists[j-1] = td;
+                    uint32_t ti = best_ids[j]; best_ids[j] = best_ids[j-1]; best_ids[j-1] = ti;
+                    uint8_t tl = best_labels[j]; best_labels[j] = best_labels[j-1]; best_labels[j-1] = tl;
+                }
+            } else if (dist < best_dists[k-1]) {
+                best_dists[k-1] = dist;
+                best_ids[k-1] = id;
+                best_labels[k-1] = dataset_.labels[id];
+                for (int j = k-1; j > 0 && best_dists[j] < best_dists[j-1]; --j) {
+                    float td = best_dists[j]; best_dists[j] = best_dists[j-1]; best_dists[j-1] = td;
+                    uint32_t ti = best_ids[j]; best_ids[j] = best_ids[j-1]; best_ids[j-1] = ti;
+                    uint8_t tl = best_labels[j]; best_labels[j] = best_labels[j-1]; best_labels[j-1] = tl;
+                }
+            }
         }
     }
 
-    std::sort(topk.begin(), topk.begin() + topk_size, [](const Neighbor& a, const Neighbor& b) { return a.dist < b.dist; });
-    for (size_t i = 0; i < topk_size; ++i) {
-        out_indices[i] = topk[i].id;
-        out_distances[i] = topk[i].dist;
-        out_labels[i] = topk[i].label;
+    for (int i = 0; i < found; ++i) {
+        out_indices[i] = best_ids[i];
+        out_distances[i] = best_dists[i];
+        out_labels[i] = best_labels[i];
     }
-    return (int)topk_size;
+    return found;
 }

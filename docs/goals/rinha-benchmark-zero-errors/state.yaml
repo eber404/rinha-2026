@@ -1,0 +1,187 @@
+version: 2
+
+goal:
+  title: "Rinha 2026 Benchmark to Zero Detection Errors"
+  slug: "rinha-benchmark-zero-errors"
+  kind: existing_plan
+  tranche: "Validate plan, collect baseline evidence, and iteratively execute verified fix slices until all benchmark target metrics are zero without rule violations."
+  status: active
+  intake:
+    original_request: "Corrigir a implementacao atual ate o benchmark atingir obrigatoriamente http_errors=0, false_positive_detections=0, false_negative_detections=0, failure_rate=0%, respeitando as regras oficiais."
+    interpreted_outcome: "Deliver a rules-compliant implementation that reaches zero HTTP and fraud-detection benchmark errors."
+    input_shape: existing_plan
+    audience: "Rinha 2026 maintainers and benchmark evaluators"
+    authority: requested
+    proof_type: metric
+    completion_proof: "A local make benchmark result with http_errors=0, false_positive_detections=0, false_negative_detections=0, failure_rate=0%."
+    likely_misfire: "Chasing better metrics by deviating from official challenge semantics instead of fixing true correctness and reliability issues."
+    blind_spots_considered:
+      - "Load-driven nondeterminism and race conditions that only appear during benchmark pressure."
+      - "Mismatch between official fraud semantics and current feature/vectorization assumptions."
+      - "Throughput and timeout interactions causing failures that appear as detection errors."
+    existing_plan_facts:
+      - "Read all official docs in .cache/rinha-oficial/docs/br before code changes."
+      - "Understand architecture, module responsibilities, request flow, infra config, and concurrency points."
+      - "Run make benchmark for baseline and after each relevant fix set."
+      - "Diagnose and eliminate root causes for http_errors, false positives, false negatives, and failure rate."
+      - "Apply small, justified, rules-compliant incremental changes; adjust tests when helpful."
+      - "Finish only when all four target metrics are exactly zero."
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  no_rule_bypass_or_benchmark_cheating: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_safe_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+visual_board:
+  selected: none
+  local:
+    status: not_requested
+    url: null
+    command: "npx goalbuddy board docs/goals/rinha-benchmark-zero-errors"
+  github_projects:
+    status: not_requested
+    url: null
+    command: "npx goalbuddy extend github-projects"
+    missing: []
+
+active_task: T003
+
+tasks:
+  - id: T001
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Validate the user-provided execution plan, define risk-aware sequencing, and select the safest first evidence task for this repo."
+    inputs:
+      - "docs/goals/rinha-benchmark-zero-errors/goal.md"
+      - "User constraints and success criteria"
+    constraints:
+      - "Read-only."
+      - "Preserve official challenge semantics and anti-cheating constraints."
+      - "Do not run implementation writes in this task."
+    expected_output:
+      - "approved | revise_plan"
+      - "Validated first active evidence task objective"
+      - "Rationale tied to benchmark risk"
+      - "Next Worker gating conditions"
+    receipt:
+      result: done
+      decision: approved
+      full_outcome_complete: false
+      rationale: "User already provided a strong, rules-constrained execution plan; safest start is evidence-first scouting of official semantics before baseline diagnostics and fixes."
+      next_tasks:
+        - T002
+        - T003
+
+  - id: T002
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: medium
+    objective: "Read official docs and extract authoritative fraud, API, validation, and benchmark semantics that the implementation must satisfy."
+    inputs:
+      - ".cache/rinha-official/docs/br"
+    constraints:
+      - "Read-only."
+      - "Source-backed findings with file references."
+    expected_output:
+      - "Semantics checklist"
+      - "Validation rules and edge-case expectations"
+      - "Benchmark metric interpretation"
+    receipt:
+      result: done
+      summary: "Official docs reviewed; extracted hard requirements for API contract, 14-dim vectorization, sentinel -1 handling, score threshold, benchmark metrics, and anti-cheating constraints."
+      evidence:
+        - ".cache/rinha-official/docs/br/README.md"
+        - ".cache/rinha-official/docs/br/API.md"
+        - ".cache/rinha-official/docs/br/REGRAS_DE_DETECCAO.md"
+        - ".cache/rinha-official/docs/br/DATASET.md"
+        - ".cache/rinha-official/docs/br/AVALIACAO.md"
+        - ".cache/rinha-official/docs/br/ARQUITETURA.md"
+        - ".cache/rinha-official/docs/br/FAQ.md"
+      key_findings:
+        - "Response must use approved = (fraud_score < 0.6) and fraud_score = fraud_neighbors/5."
+        - "Vector must have 14 dimensions in exact order, with clamp[0,1] except indices 5 and 6 using -1 when last_transaction is null."
+        - "Unknown MCC must default to risk 0.5."
+        - "Benchmark labels are generated from exact KNN (k=5, euclidean, brute force) against reference vectors."
+        - "Target metrics for this goal map directly to breakdown: http_errors, false_positive_detections, false_negative_detections, and failure_rate."
+        - "Hard constraints forbid benchmark payload lookup, rule bypasses, and LB business logic."
+
+  - id: T003
+    type: scout
+    assignee: Scout
+    status: active
+    reasoning_hint: medium
+    objective: "Map current implementation architecture, execution flow, benchmark scripts, and likely fault domains for target metrics."
+    inputs:
+      - "Repository source and scripts"
+      - "Makefile benchmark target"
+    constraints:
+      - "Read-only."
+      - "No code edits."
+    expected_output:
+      - "Component and dataflow map"
+      - "Likely root-cause hypotheses per metric"
+      - "Verification command set"
+    receipt: null
+
+  - id: T004
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: medium
+    objective: "Run baseline benchmark, execute first high-impact fix slice, and verify impact against target metrics."
+    allowed_files: []
+    verify:
+      - "make benchmark"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Behavior is ambiguous against official docs."
+      - "Verification fails twice without clear diagnosis."
+    receipt: null
+
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: high
+    objective: "Audit whether all required benchmark metrics are zero with rules-compliant behavior and sufficient evidence."
+    inputs:
+      - "All done task receipts"
+      - "Latest benchmark output"
+      - "Current diff"
+    constraints:
+      - "Do not implement."
+      - "Reject completion if any target metric is non-zero."
+      - "Reject completion if success depends on rule violations or benchmark-specific hardcoding."
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "Missing evidence or next task"
+    receipt: null
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []
