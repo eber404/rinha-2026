@@ -37,6 +37,8 @@ static inline uint32_t clamp_bin(float value, float step, int max_bin) {
     return static_cast<uint32_t>(bin);
 }
 
+static constexpr int BUCKET_REFINE_NEIGHBOR_RADIUS = 3;
+
 static DirectDecision decide_conservative(const float* v, const RulesModel& r) {
     if (!v) return DirectDecision::AMBIGUOUS;
     const uint32_t leaf_count = std::min<uint32_t>(r.leaf_count, FRAUD_MAX_RULE_LEAVES);
@@ -115,18 +117,27 @@ void KNNEngine::close() {
 
 uint32_t KNNEngine::bucket_key(const float* v) {
     if (!v) return 0;
-    const uint32_t has_prev = (v[11] > 0.5f) ? 1u : 0u;
+    const uint32_t has_last_tx = (v[5] >= 0.0f) ? 1u : 0u;
+    const uint32_t is_online = (v[9] > 0.5f) ? 1u : 0u;
+    const uint32_t card_present = (v[10] > 0.5f) ? 1u : 0u;
+    const uint32_t unknown_merchant = (v[11] > 0.5f) ? 1u : 0u;
     const uint32_t high_mcc = (v[12] >= 0.6f) ? 1u : 0u;
-    const uint32_t amount_bin = clamp_bin(v[2], 0.25f, 7);
-    const uint32_t km_bin = clamp_bin(v[7], 0.25f, 7);
-    const uint32_t risk_bin = clamp_bin(v[12], 0.20f, 4);
+
+    const uint32_t amount_bin = clamp_bin(v[2], 0.125f, 7);
+    const uint32_t tx_count_bin = clamp_bin(v[8], 0.125f, 7);
+    const uint32_t km_bin = clamp_bin(v[7], 0.125f, 7);
+    const uint32_t hour_bin = clamp_bin(v[3], 0.25f, 3);
 
     uint32_t key = 0;
-    key |= has_prev;
-    key |= (high_mcc << 1);
-    key |= (amount_bin << 2);
-    key |= (km_bin << 5);
-    key |= (risk_bin << 8);
+    key |= has_last_tx;
+    key |= (is_online << 1);
+    key |= (card_present << 2);
+    key |= (unknown_merchant << 3);
+    key |= (high_mcc << 4);
+    key |= (amount_bin << 5);
+    key |= (tx_count_bin << 8);
+    key |= (km_bin << 11);
+    key |= (hour_bin << 14);
     return key;
 }
 
@@ -401,28 +412,22 @@ float KNNEngine::score_vector_fallback(const float* query) {
         const float exact_score = score_knn_full(query);
         if ((ivf_score < 0.6f) != (exact_score < 0.6f)) counters_.sample_disagree++;
     }
-    const bool in_boundary_band = (ivf_score >= 0.45f && ivf_score <= 0.55f);
-    const bool weak_neighbor_signal = (found >= 2 && std::fabs(distances[found - 1] - distances[0]) < 0.005f);
-    const bool should_refine = in_boundary_band || weak_neighbor_signal;
-
-    if (should_refine) {
-        counters_.bucket_refine_triggered++;
-        int local_found = 0;
-        float refined = score_knn_bucket(query, 0, &local_found);
-        if (local_found >= k_runtime_) {
-            counters_.bucket_refine_used++;
-            counters_.bucket_refine_same_only++;
-            return apply_ambiguous_head(refined, query, local_found);
-        }
-
-        refined = score_knn_bucket(query, 2, &local_found);
-        if (local_found >= k_runtime_) {
-            counters_.bucket_refine_used++;
-            counters_.bucket_refine_neighbor++;
-            return apply_ambiguous_head(refined, query, local_found);
-        }
-        counters_.bucket_refine_no_candidates++;
+    counters_.bucket_refine_triggered++;
+    int local_found = 0;
+    float refined = score_knn_bucket(query, 0, &local_found);
+    if (local_found >= k_runtime_) {
+        counters_.bucket_refine_used++;
+        counters_.bucket_refine_same_only++;
+        return apply_ambiguous_head(refined, query, local_found);
     }
+
+    refined = score_knn_bucket(query, BUCKET_REFINE_NEIGHBOR_RADIUS, &local_found);
+    if (local_found >= k_runtime_) {
+        counters_.bucket_refine_used++;
+        counters_.bucket_refine_neighbor++;
+        return apply_ambiguous_head(refined, query, local_found);
+    }
+    counters_.bucket_refine_no_candidates++;
 
     float base_score = ivf_score;
     if (ivf_score == 0.4f) base_score = 0.6f;
