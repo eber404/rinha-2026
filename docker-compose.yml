@@ -17,6 +17,7 @@ services:
     command: ["bun", "run", "src/index.ts"]
     volumes:
       - ./fraud-api:/app
+      - rinha-native-build:/app/native/build
       - ./vector-index:/data/vector-index:ro
       - rinha-sockets:/tmp/rinha
     networks:
@@ -67,3 +68,4 @@ networks:
 
 volumes:
   rinha-sockets:
+  rinha-native-build:

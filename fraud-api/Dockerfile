@@ -2,7 +2,7 @@ FROM oven/bun:canary AS builder
 RUN apt-get update -qq && apt-get install -y -qq g++ make
 WORKDIR /build
 COPY native/ ./native/
-RUN mkdir -p native/build && g++ -O3 -std=c++20 -flto -fPIC -shared -o native/build/knn.so native/knn.cpp native/binding.cpp
+RUN mkdir -p native/build && g++ -O3 -std=c++20 -flto -fPIC -shared -o native/build/knn.so native/knn.cpp native/ambiguous_head.cpp native/binding.cpp
 
 FROM oven/bun:canary
 WORKDIR /app
