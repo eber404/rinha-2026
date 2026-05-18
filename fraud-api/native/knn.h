@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector>
+#include <unordered_map>
 
 static constexpr int KNN_DIMS = 14;
 static constexpr int KNN_K = 5;
@@ -47,9 +48,14 @@ private:
     float score_vector_fallback(const float* query);
     float score_knn_full(const float* query) const;
     float score_ivf_exact_local(const float* query, int n_probe_expand) const;
+    float score_knn_bucket(const float* query, int bucket_radius, int* out_found) const;
     int search_nprobe(const float* query, int k, int n_probe, uint32_t* out_indices, float* out_distances, uint8_t* out_labels) const;
+    static uint32_t bucket_key(const float* vector14);
+    static int bucket_distance(uint32_t a, uint32_t b);
     Dataset dataset_;
     IVFIndex ivf_;
+    std::vector<uint32_t> bucket_keys_;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> bucket_lists_;
     RulesModel rules_{};
     RuntimeCounters counters_{};
     AmbiguousHead ambiguous_head_{};

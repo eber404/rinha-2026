@@ -29,6 +29,14 @@ static inline float l2_sq(const float* a, const float* b) {
     return s;
 }
 
+static inline uint32_t clamp_bin(float value, float step, int max_bin) {
+    if (!std::isfinite(value) || value < 0.0f) return 0;
+    int bin = static_cast<int>(value / step);
+    if (bin < 0) bin = 0;
+    if (bin > max_bin) bin = max_bin;
+    return static_cast<uint32_t>(bin);
+}
+
 static DirectDecision decide_conservative(const float* v, const RulesModel& r) {
     if (!v) return DirectDecision::AMBIGUOUS;
     const uint32_t leaf_count = std::min<uint32_t>(r.leaf_count, FRAUD_MAX_RULE_LEAVES);
@@ -92,6 +100,8 @@ void KNNEngine::close() {
     }
     dataset_ = Dataset{};
     ivf_ = IVFIndex{};
+    bucket_keys_.clear();
+    bucket_lists_.clear();
     rules_ = RulesModel{};
     counters_ = RuntimeCounters{};
     ambiguous_head_.close();
@@ -101,6 +111,28 @@ void KNNEngine::close() {
     ambiguous_head_enabled_ = true;
     ambiguous_head_env_enabled_ = true;
     ready_ = false;
+}
+
+uint32_t KNNEngine::bucket_key(const float* v) {
+    if (!v) return 0;
+    const uint32_t has_prev = (v[11] > 0.5f) ? 1u : 0u;
+    const uint32_t high_mcc = (v[12] >= 0.6f) ? 1u : 0u;
+    const uint32_t amount_bin = clamp_bin(v[2], 0.25f, 7);
+    const uint32_t km_bin = clamp_bin(v[7], 0.25f, 7);
+    const uint32_t risk_bin = clamp_bin(v[12], 0.20f, 4);
+
+    uint32_t key = 0;
+    key |= has_prev;
+    key |= (high_mcc << 1);
+    key |= (amount_bin << 2);
+    key |= (km_bin << 5);
+    key |= (risk_bin << 8);
+    return key;
+}
+
+int KNNEngine::bucket_distance(uint32_t a, uint32_t b) {
+    const uint32_t x = a ^ b;
+    return __builtin_popcount(x);
 }
 
 bool KNNEngine::load_manifest(const char* path) {
@@ -213,6 +245,15 @@ bool KNNEngine::load(const char* dataset_path, const char* labels_path, const ch
     dataset_.labels = (const uint8_t*)lptr;
     labels_size_ = lsize;
 
+    bucket_keys_.resize(dataset_.count);
+    bucket_lists_.clear();
+    bucket_lists_.reserve(1024);
+    for (size_t i = 0; i < dataset_.count; ++i) {
+        const uint32_t key = bucket_key(&dataset_.vectors[i * KNN_DIMS]);
+        bucket_keys_[i] = key;
+        bucket_lists_[key].push_back(static_cast<uint32_t>(i));
+    }
+
     FILE* f = fopen(index_path, "rb");
     if (!f) { close(); return false; }
     int header[2];
@@ -242,10 +283,12 @@ float KNNEngine::score(const float* vector14) {
         counters_.clear_legit++;
         const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
         if (total && total % 10000 == 0) {
-            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu\n",
+            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu bucket_refine_triggered=%lu bucket_refine_used=%lu bucket_refine_same_only=%lu bucket_refine_neighbor=%lu bucket_refine_no_candidates=%lu\n",
                          total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
                          counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree,
-                         counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed);
+                         counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed,
+                         counters_.bucket_refine_triggered, counters_.bucket_refine_used, counters_.bucket_refine_same_only,
+                         counters_.bucket_refine_neighbor, counters_.bucket_refine_no_candidates);
         }
         return 0.0f;
     }
@@ -253,10 +296,12 @@ float KNNEngine::score(const float* vector14) {
         counters_.clear_fraud++;
         const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
         if (total && total % 10000 == 0) {
-            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu\n",
+            std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu bucket_refine_triggered=%lu bucket_refine_used=%lu bucket_refine_same_only=%lu bucket_refine_neighbor=%lu bucket_refine_no_candidates=%lu\n",
                          total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
                          counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree,
-                         counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed);
+                         counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed,
+                         counters_.bucket_refine_triggered, counters_.bucket_refine_used, counters_.bucket_refine_same_only,
+                         counters_.bucket_refine_neighbor, counters_.bucket_refine_no_candidates);
         }
         return 1.0f;
     }
@@ -264,10 +309,12 @@ float KNNEngine::score(const float* vector14) {
     counters_.fallback_full++;
     const uint64_t total = counters_.clear_legit + counters_.clear_fraud + counters_.ambiguous;
     if (total && total % 10000 == 0) {
-        std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu\n",
+        std::fprintf(stderr, "fraud_stats total=%lu clear_legit=%lu clear_fraud=%lu ambiguous=%lu fallback_full=%lu fallback_bucket=%lu fallback_ivf=%lu refinement_exact=%lu refinement_changed=%lu sample_exact=%lu sample_disagree=%lu ambiguous_head_used=%lu ambiguous_head_bypassed=%lu bucket_refine_triggered=%lu bucket_refine_used=%lu bucket_refine_same_only=%lu bucket_refine_neighbor=%lu bucket_refine_no_candidates=%lu\n",
                      total, counters_.clear_legit, counters_.clear_fraud, counters_.ambiguous, counters_.fallback_full, counters_.fallback_bucket,
                      counters_.fallback_ivf, counters_.refinement_exact, counters_.refinement_changed, counters_.sample_exact, counters_.sample_disagree,
-                     counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed);
+                     counters_.ambiguous_head_used, counters_.ambiguous_head_bypassed,
+                     counters_.bucket_refine_triggered, counters_.bucket_refine_used, counters_.bucket_refine_same_only,
+                     counters_.bucket_refine_neighbor, counters_.bucket_refine_no_candidates);
     }
     return score_vector_fallback(vector14);
 }
@@ -354,20 +401,32 @@ float KNNEngine::score_vector_fallback(const float* query) {
         const float exact_score = score_knn_full(query);
         if ((ivf_score < 0.6f) != (exact_score < 0.6f)) counters_.sample_disagree++;
     }
+    const bool in_boundary_band = (ivf_score >= 0.45f && ivf_score <= 0.55f);
+    const bool weak_neighbor_signal = (found >= 2 && std::fabs(distances[found - 1] - distances[0]) < 0.005f);
+    const bool should_refine = in_boundary_band || weak_neighbor_signal;
+
+    if (should_refine) {
+        counters_.bucket_refine_triggered++;
+        int local_found = 0;
+        float refined = score_knn_bucket(query, 0, &local_found);
+        if (local_found >= k_runtime_) {
+            counters_.bucket_refine_used++;
+            counters_.bucket_refine_same_only++;
+            return apply_ambiguous_head(refined, query, local_found);
+        }
+
+        refined = score_knn_bucket(query, 2, &local_found);
+        if (local_found >= k_runtime_) {
+            counters_.bucket_refine_used++;
+            counters_.bucket_refine_neighbor++;
+            return apply_ambiguous_head(refined, query, local_found);
+        }
+        counters_.bucket_refine_no_candidates++;
+    }
+
     float base_score = ivf_score;
     if (ivf_score == 0.4f) base_score = 0.6f;
     if (ivf_score == 0.6f) base_score = 0.4f;
-
-    // Two-tier: if ambiguous (2/5 or 3/5), refine with exact-local over expanded probe
-    if (frauds == 2 || frauds == 3) {
-        counters_.two_tier_exact_local++;
-        const float exact_local_score = score_ivf_exact_local(query, KNN_REFINE_NPROBE);
-        // If exact-local changes the decision boundary, use it; else keep ivf
-        if ((ivf_score < 0.6f) != (exact_local_score < 0.6f)) {
-            counters_.two_tier_boundary_changed++;
-            return apply_ambiguous_head(exact_local_score, query, found);
-        }
-    }
     return apply_ambiguous_head(base_score, query, found);
 }
 
@@ -419,6 +478,61 @@ float KNNEngine::score_knn_full(const float* query) const {
     for (int i = 0; i < found; ++i) {
         frauds += labels[i] ? 1 : 0;
     }
+    return static_cast<float>(frauds) / static_cast<float>(found);
+}
+
+float KNNEngine::score_knn_bucket(const float* query, int bucket_radius, int* out_found) const {
+    if (!query || !dataset_.vectors || !dataset_.labels || dataset_.count == 0) {
+        if (out_found) *out_found = 0;
+        return 0.5f;
+    }
+    if (bucket_radius < 0) bucket_radius = 0;
+
+    const uint32_t qkey = bucket_key(query);
+    const int k = std::min(k_runtime_, KNN_K);
+    float distances[KNN_K];
+    uint8_t labels[KNN_K];
+    int found = 0;
+    for (int i = 0; i < k; ++i) {
+        distances[i] = 1e30f;
+        labels[i] = 0;
+    }
+
+    auto consume_id = [&](uint32_t id) {
+        const float dist = l2_sq(query, &dataset_.vectors[id * KNN_DIMS]);
+        if (found < k) {
+            distances[found] = dist;
+            labels[found] = dataset_.labels[id];
+            ++found;
+        } else if (dist < distances[k - 1]) {
+            distances[k - 1] = dist;
+            labels[k - 1] = dataset_.labels[id];
+        } else {
+            return;
+        }
+        for (int j = found < k ? found - 1 : k - 1; j > 0 && distances[j] < distances[j - 1]; --j) {
+            std::swap(distances[j], distances[j - 1]);
+            std::swap(labels[j], labels[j - 1]);
+        }
+    };
+
+    if (bucket_radius == 0) {
+        const auto it = bucket_lists_.find(qkey);
+        if (it != bucket_lists_.end()) {
+            for (uint32_t id : it->second) consume_id(id);
+        }
+    } else {
+        for (const auto& entry : bucket_lists_) {
+            if (bucket_distance(qkey, entry.first) > bucket_radius) continue;
+            for (uint32_t id : entry.second) consume_id(id);
+        }
+    }
+
+    if (out_found) *out_found = found;
+    if (found == 0) return 0.5f;
+
+    int frauds = 0;
+    for (int i = 0; i < found; ++i) frauds += labels[i] ? 1 : 0;
     return static_cast<float>(frauds) / static_cast<float>(found);
 }
 

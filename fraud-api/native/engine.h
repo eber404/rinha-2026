@@ -59,4 +59,9 @@ struct RuntimeCounters {
     uint64_t ambiguous_head_bypassed = 0;
     uint64_t two_tier_exact_local = 0;
     uint64_t two_tier_boundary_changed = 0;
+    uint64_t bucket_refine_triggered = 0;
+    uint64_t bucket_refine_used = 0;
+    uint64_t bucket_refine_same_only = 0;
+    uint64_t bucket_refine_neighbor = 0;
+    uint64_t bucket_refine_no_candidates = 0;
 };
