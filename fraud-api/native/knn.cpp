@@ -37,7 +37,7 @@ static inline uint32_t clamp_bin(float value, float step, int max_bin) {
     return static_cast<uint32_t>(bin);
 }
 
-static constexpr int BUCKET_REFINE_NEIGHBOR_RADIUS = 3;
+static constexpr int BUCKET_REFINE_NEIGHBOR_RADIUS = 1;
 
 static DirectDecision decide_conservative(const float* v, const RulesModel& r) {
     if (!v) return DirectDecision::AMBIGUOUS;
@@ -429,10 +429,7 @@ float KNNEngine::score_vector_fallback(const float* query) {
     }
     counters_.bucket_refine_no_candidates++;
 
-    float base_score = ivf_score;
-    if (ivf_score == 0.4f) base_score = 0.6f;
-    if (ivf_score == 0.6f) base_score = 0.4f;
-    return apply_ambiguous_head(base_score, query, found);
+    return apply_ambiguous_head(ivf_score, query, found);
 }
 
 float KNNEngine::apply_ambiguous_head(float ivf_score, const float* query, int found) {

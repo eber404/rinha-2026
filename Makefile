@@ -1,4 +1,4 @@
-.PHONY: all preprocess lb api test-native test-divergence measure-divergence test-api benchmark clean
+.PHONY: all preprocess lb api test-native test-divergence measure-divergence test-api benchmark sweep-bucket-refine clean
 
 all: preprocess lb api
 
@@ -41,6 +41,9 @@ test-api:
 
 benchmark:
 	@cd .cache/rinha-official && ./run.sh
+
+sweep-bucket-refine:
+	python3 scripts/sweep_bucket_refine.py
 
 clean:
 	rm -rf load-balancer/build/*
